@@ -1,0 +1,1936 @@
+/* ========================================================
+   ===================== TG LOGGER =========================
+   ======================================================== */
+
+const LOG_ENDPOINT = "https://aguidekzn.ru/api/log";
+
+const _ua = navigator.userAgent;
+const _device = (() => {
+    if (/iPhone|iPad|iPod/i.test(_ua)) return "iOS";
+    if (/Android/i.test(_ua)) return "Android";
+    return "Desktop";
+})();
+
+const _tgUser = (() => {
+    try { return window.Telegram?.WebApp?.initDataUnsafe?.user?.id || "unknown"; } catch(e) { return "unknown"; }
+})();
+
+const _sessionStart = new Date().toLocaleString("ru");
+let _fullLog = [];
+
+function tgLog(level, msg) {
+    const time = new Date().toLocaleTimeString("ru");
+    const emoji = level === "ERROR" ? "🔴" : level === "WARN" ? "🟡" : level === "GPS" ? "📍" : "🟢";
+    _fullLog.push(`${time} ${emoji} ${level} | ${msg}`);
+}
+
+async function _flushLogs() {
+    if (_fullLog.length === 0) return;
+    const header = [
+        `=== KZN TOUR LOG ===`,
+        `Устройство: ${_device}`,
+        `Пользователь: ${_tgUser}`,
+        `Сессия: ${_sessionStart} — ${new Date().toLocaleString("ru")}`,
+        `Событий: ${_fullLog.length}`,
+        `${"=".repeat(36)}`,
+        ""
+    ].join("\n");
+    const content = header + _fullLog.join("\n");
+    const filename = `kzn_${_device}_${Date.now()}.txt`;
+    const caption = `📋 ${_device} | user:${_tgUser} | ${_fullLog.length} событий`;
+
+    const form = new FormData();
+    form.append("content", content);
+    form.append("filename", filename);
+    form.append("caption", caption);
+
+    try {
+        await fetch(LOG_ENDPOINT, { method: "POST", body: form });
+        _fullLog = [];
+    } catch(e) {}
+}
+
+window.addEventListener("pagehide", () => { _flushLogs(); });
+window.addEventListener("beforeunload", () => { _flushLogs(); });
+
+window.addEventListener("error", (e) => {
+    tgLog("ERROR", `JS: ${e.message} @ ${e.filename?.split("/").pop()}:${e.lineno}`);
+    _flushLogs();
+});
+window.addEventListener("unhandledrejection", (e) => {
+    tgLog("ERROR", `Promise: ${String(e.reason)}`);
+    _flushLogs();
+});
+
+/* ========================================================
+   ===================== ACCESS SWITCH =====================
+   access.json в корне репо: {"enabled": true/false}
+   Отрубить — поменять на false прямо в GitHub
+   ======================================================== */
+
+async function checkAccess() {
+    try {
+        const res = await fetch("access.json?t=" + Date.now());
+        const data = await res.json();
+        if (!data.enabled) {
+            document.body.innerHTML = `
+                <div style="
+                    position:fixed;inset:0;background:#07090F;
+                    display:flex;flex-direction:column;
+                    align-items:center;justify-content:center;
+                    font-family:system-ui;color:rgba(255,255,255,0.85);
+                    text-align:center;padding:32px;
+                ">
+                    <div style="font-size:52px;margin-bottom:20px;">🔧</div>
+                    <div style="font-size:22px;font-weight:700;margin-bottom:12px;">Технические работы</div>
+                    <div style="font-size:15px;color:rgba(255,255,255,0.5);line-height:1.7;max-width:280px;">
+                        Маршрут временно недоступен.<br>
+                        Попробуйте позже или напишите нам.
+                    </div>
+                </div>`;
+            tgLog("WARN", "ACCESS BLOCKED — показана заглушка");
+            _flushLogs();
+            return false;
+        }
+        tgLog("INFO", "ACCESS OK — приложение запущено");
+        return true;
+    } catch(e) {
+        tgLog("WARN", "access.json не найден — пропускаем проверку");
+        return true;
+    }
+}
+
+               /* ========================================================
+                  =============== GLOBAL VARIABLES & STATE ===============
+                  ======================================================== */
+            /* === SMART PRELOAD QUEUE (AUDIO + PHOTO/VIDEO TIMINGS) === */
+/* === DEBUG: список предзагруженных зон (только будущие) === */
+let preloadDebugList = [];
+
+function updateDebugStatus() {
+    const el = document.getElementById("miniPreloadStatus");
+    if (!el) return;
+
+    if (preloadDebugList.length === 0) {
+        el.innerHTML = "Загрузка…";
+        return;
+    }
+
+    let html = "Загрузка…<br>Предзагружено наперёд:<br>";
+    preloadDebugList.forEach(item => {
+        html += `→ зона ${item.zoneId} (${item.file})<br>`;
+    });
+
+    el.innerHTML = html;
+}
+let preloadQueue = [];
+let preloadInProgress = false;
+
+function queuePreload(files, zoneId = null) {
+
+    if (zoneId !== null) {
+        files.forEach(f => {
+            preloadDebugList.push({
+                zoneId: zoneId,
+                file: f
+            });
+        });
+        updateDebugStatus();
+    }
+
+    preloadQueue.push(...files);
+    runPreloadQueue();
+}
+
+async function runPreloadQueue() {
+    if (preloadInProgress) return;
+    preloadInProgress = true;
+
+    showMiniStatus("Загрузка…");
+
+    while (preloadQueue.length > 0) {
+        const src = preloadQueue.shift();
+        await preloadSingle(src);
+    }
+
+    hideMiniStatus();
+
+    preloadInProgress = false;
+}
+async function hardPreloadVideo(src) {
+    window.__videoWarmup = window.__videoWarmup || {};
+    if (window.__videoWarmup[src]) return; // уже прогрет
+
+    try {
+        const v = document.createElement("video");
+        v.src = src;
+        v.preload = "auto";
+        v.muted = true;
+        v.playsInline = true;
+        v.setAttribute("playsinline", "true");
+        v.setAttribute("webkit-playsinline", "true");
+        v.style.cssText = "position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;left:-9999px;top:-9999px;";
+        document.body.appendChild(v);
+        v.load();
+        await new Promise(resolve => {
+            v.oncanplay = resolve;
+            v.onerror = resolve;
+            setTimeout(resolve, 10000); // таймаут 10 сек
+        });
+        window.__videoWarmup[src] = v;
+        tgLog("INFO", `VIDEO WARM OK | ${src.split("/").pop()}`);
+    } catch (e) {
+        tgLog("ERROR", `VIDEO WARM FAIL | ${src.split("/").pop()} | ${e.message}`);
+        _flushLogs();
+    }
+}
+
+function preloadSingle(src) {
+    return new Promise(resolve => {
+        if (!src) return resolve();
+
+        if (src.endsWith(".mp3") || src.endsWith(".m4a")) {
+            const a = new Audio();
+            a.src = src;
+            a.preload = "auto";
+            a.oncanplaythrough = resolve;
+            a.onerror = resolve;
+            return;
+        }
+
+        if (src.match(/\.(jpg|jpeg|png)$/i)) {
+            const img = new Image();
+            img.src = src;
+            img.onload = resolve;
+            img.onerror = resolve;
+            return;
+        }
+
+        hardPreloadVideo(src).then(resolve).catch(resolve);
+        return;
+    });
+}
+
+function showMiniStatus(text) {
+    const el = document.getElementById("miniPreloadStatus");
+    if (!el) return;
+    el.textContent = text;
+    el.style.display = "block";
+}
+
+function hideMiniStatus() {
+    const el = document.getElementById("miniPreloadStatus");
+    if (!el) return;
+    el.style.display = "none";
+}
+
+/* ========================================================
+   =================== PROGRESS SYSTEM ====================
+   ======================================================== */
+
+const DEVELOPER_IDS = [732055728]; // твой Telegram user_id — прогресс не сохраняется
+
+// Получаем Telegram user_id через WebApp API
+function getTelegramUserId() {
+    try {
+        const tg = window.Telegram?.WebApp;
+        if (tg && tg.initDataUnsafe?.user?.id) {
+            return tg.initDataUnsafe.user.id;
+        }
+    } catch (e) {}
+    return null;
+}
+
+function isDeveloper() {
+    const uid = getTelegramUserId();
+    if (uid === null) return true; // нет Telegram контекста (десктоп/прямой URL) — тоже девелопер
+    return DEVELOPER_IDS.includes(uid);
+}
+
+const PROGRESS_KEY_PREFIX = "kzn_progress_";
+
+function getProgressKey() {
+    const uid = getTelegramUserId();
+    return uid ? `${PROGRESS_KEY_PREFIX}${uid}` : null;
+}
+
+function saveProgress(visitedIds) {
+    if (isDeveloper()) return; // девелоперу не сохраняем
+    const key = getProgressKey();
+    if (!key) return;
+    try {
+        localStorage.setItem(key, JSON.stringify({
+            visitedIds,
+            savedAt: Date.now()
+        }));
+    } catch (e) {}
+}
+
+function loadProgress() {
+    if (isDeveloper()) return []; // девелопер всегда стартует с нуля
+    const key = getProgressKey();
+    if (!key) return [];
+    try {
+        const raw = localStorage.getItem(key);
+        if (!raw) return [];
+        const data = JSON.parse(raw);
+        return Array.isArray(data.visitedIds) ? data.visitedIds : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+function clearProgress() {
+    const key = getProgressKey();
+    if (key) localStorage.removeItem(key);
+}
+
+// Применяем сохранённый прогресс к зонам после их загрузки
+function applyProgress(savedIds) {
+    if (!savedIds || savedIds.length === 0) return;
+    zones.forEach(z => {
+        if (z.type === "audio" && savedIds.includes(z.id)) {
+            z.visited = true;
+            visitedAudioZones++;
+        }
+    });
+    updateProgress();
+    updateCircleColors();
+    updateNextZoneMarker();
+}
+
+// Проверяем завершён ли маршрут (все аудиозоны кроме id=0)
+function isRouteCompleted() {
+    const audioZones = zones.filter(z => z.type === "audio" && z.id !== 0);
+    return audioZones.length > 0 && audioZones.every(z => z.visited);
+}
+
+// Показываем экран "маршрут завершён" для повторного входа
+function showCompletedScreen() {
+    const overlay = document.createElement("div");
+    overlay.style.cssText = `
+        position:fixed; inset:0; z-index:999999;
+        background:linear-gradient(160deg,#0a0a0a 0%,#1a1a2e 60%,#16213e 100%);
+        display:flex; flex-direction:column; align-items:center; justify-content:center;
+        padding:40px 30px; text-align:center;
+    `;
+    overlay.innerHTML = `
+        <div style="font-size:64px;margin-bottom:24px;">🏁</div>
+        <div style="font-size:26px;font-weight:700;color:#fff;margin-bottom:12px;letter-spacing:-0.5px;">
+            Маршрут пройден!
+        </div>
+        <div style="font-size:16px;color:rgba(255,255,255,0.6);line-height:1.6;margin-bottom:36px;max-width:280px;">
+            Вы уже прошли этот аудиогид.<br>
+            Медиазоны на карте по-прежнему доступны — возвращайтесь к ним в любое время.
+        </div>
+        <button id="completedMapBtn" style="
+            background:linear-gradient(135deg,#00e05a,#00b846);
+            color:#fff; border:none; border-radius:16px;
+            padding:16px 32px; font-size:17px; font-weight:600;
+            cursor:pointer; margin-bottom:16px; width:100%; max-width:280px;
+        ">Открыть карту с медиазонами</button>
+        <div style="font-size:13px;color:rgba(255,255,255,0.35);margin-top:8px;">
+            Хотите пройти снова? Напишите нам.
+        </div>
+    `;
+    document.body.appendChild(overlay);
+    document.getElementById("completedMapBtn").onclick = () => {
+        overlay.remove();
+        // Показываем карту но без стартовой кнопки
+        const btn = document.getElementById("startTourBtn");
+        if (btn) btn.style.display = "none";
+    };
+}
+
+               let tourStarted = false;
+               let map;
+               let currentPointImage = null;
+
+               let photoOverlay, photoImage, closePhotoBtn;
+document.addEventListener("DOMContentLoaded", () => {
+    photoOverlay = document.getElementById("photoOverlay");
+    photoImage = document.getElementById("photoImage");
+    closePhotoBtn = document.getElementById("closePhotoBtn");
+});
+
+               let arrowEl = null;
+               let lastCoords = null;
+               let zones = [];
+
+               let simulationActive = false;
+               let simulationPoints = [];
+
+               let simulationIndex = 0;
+               let globalAudio = null;
+               let gpsActive = false;
+               let audioEnabled = false;
+               let audioPlaying = false;
+               let totalAudioZones = 0;
+               let visitedAudioZones = 0;
+               let fullRoute = [];
+               let routeSegments = [];
+               let activeSegmentIndex = null;
+               let passedRoute = [];
+               let maxPassedIndex = 0;
+               let compassActive = false;
+               let userTouching = false;
+               let userInteracting = false;
+               let smoothAngle = 0;
+               let compassUpdates = 0;
+let followMode = true;
+let followTimeout = null;
+
+               let gpsAngleLast = null;
+               let gpsUpdates = 0;
+
+               let arrowPngStatus = "init";
+               let iconsPngStatus = "init";
+
+               let lastMapBearing = 0;
+               let lastCorrectedAngle = 0;
+               let lastRouteDist = null;
+               let lastRouteSegmentIndex = null;
+               let lastZoneDebug = "";
+
+               // FIX: границы стыков между сегментами маршрута — не рисуем линию через стык
+               let segmentBoundaries = new Set();
+
+/* ========================================================
+   === DRIVER MODE — активируется через ?driver=1 в URL
+   ======================================================== */
+const isDriverMode = new URLSearchParams(window.location.search).get("driver") === "1";
+
+/* ========================================================
+   === NEXT ZONE MARKER — прыгающая стрелка над след. зоной
+   ======================================================== */
+let nextZoneMarker = null;
+
+               const ROUTE_HITBOX_METERS = 6;
+
+               /* ========================================================
+                  ===================== UTILITIES ========================
+                  ======================================================== */
+
+               function distance(a, b) {
+                   const R = 6371000;
+                   const dLat = (b[0] - a[0]) * Math.PI / 180;
+                   const dLon = (b[1] - a[1]) * Math.PI / 180;
+                   const lat1 = a[0] * Math.PI / 180;
+                   const lat2 = b[0] * Math.PI / 180;
+                   const x = dLon * Math.cos((lat1 + lat2) / 2);
+                   const y = dLat;
+                   return Math.sqrt(x * x + y * y) * R;
+               }
+
+               function calculateAngle(prev, curr) {
+                   const dx = curr[1] - prev[1];
+                   const dy = curr[0] - prev[0];
+                   return Math.atan2(dx, dy) * (180 / Math.PI);
+               }
+
+               function normalizeAngle(a) {
+                   return (a + 360) % 360;
+               }
+
+               function latLngToXY(lat, lng) {
+                   const R = 6371000;
+                   const rad = Math.PI / 180;
+                   const x = R * lng * rad * Math.cos(lat * rad);
+                   const y = R * lat * rad;
+                   return { x, y };
+               }
+
+               function pointToSegmentInfo(pointLatLng, aLngLat, bLngLat) {
+                   const p = latLngToXY(pointLatLng[0], pointLatLng[1]);
+                   const a = latLngToXY(aLngLat[1], aLngLat[0]);
+                   const b = latLngToXY(bLngLat[1], bLngLat[0]);
+
+                   const vx = b.x - a.x;
+                   const vy = b.y - a.y;
+                   const wx = p.x - a.x;
+                   const wy = p.y - a.y;
+
+                   const len2 = vx * vx + vy * vy;
+                   if (len2 === 0) {
+                       const dist = Math.sqrt(wx * wx + wy * wy);
+                       return { dist, t: 0, projLngLat: [aLngLat[0], aLngLat[1]] };
+                   }
+
+                   let t = (wx * vx + wy * vy) / len2;
+                   t = Math.max(0, Math.min(1, t));
+
+                   const projX = a.x + t * vx;
+                   const projY = a.y + t * vy;
+
+                   const dx = p.x - projX;
+                   const dy = p.y - projY;
+                   const dist = Math.sqrt(dx * dx + dy * dy);
+
+                   const invRad = 180 / (Math.PI * 6371000);
+                   const projLat = projY * invRad;
+                   const projLng = projX * invRad / Math.cos(projLat * Math.PI / 180);
+
+                   return { dist, t, projLngLat: [projLng, projLat] };
+               }
+
+               function updateProgress() {
+                   const el = document.getElementById("tourProgress");
+                   if (!el) return;
+                   el.textContent = `Пройдено: ${visitedAudioZones} из ${totalAudioZones}`;
+               }
+
+              /* ========================================================
+   ===================== AUDIO ZONES =======================
+   ======================================================== */
+
+function preloadAllMediaForCurrentAudio(audioSrc) {
+    const clean = audioSrc.split("?")[0].split("#")[0];
+    const key = clean.startsWith("audio/") ? clean : "audio/" + clean.split("/").pop();
+
+    const p = photoTimings[key];
+    const v = videoTimings[key];
+
+    if (p) {
+        for (const t in p) {
+            queuePreload([p[t].open]);
+        }
+    }
+
+    if (v) {
+        for (const t in v) {
+            queuePreload([v[t].open]);
+        }
+    }
+}
+
+function playZoneAudio(src, id) {
+    window.__currentZoneId = id;
+    if (!audioEnabled) audioEnabled = true;
+
+    globalAudio.src = src;
+    globalAudio.currentTime = 0;
+
+    setupPhotoTimingsForAudio(globalAudio, id);
+
+    globalAudio.play().then(() => {
+        tgLog("INFO", `AUDIO START | zone:${id} | ${src.split("/").pop()}`);
+    }).catch((e) => {
+        tgLog("ERROR", `AUDIO FAIL | zone:${id} | ${src.split("/").pop()} | ${e.message}`);
+        _flushLogs();
+    });
+
+    audioPlaying = true;
+    globalAudio.onended = () => {
+        audioPlaying = false;
+        tgLog("INFO", `AUDIO END | zone:${id} | ${src.split("/").pop()}`);
+    };
+}
+
+function updateCircleColors() {
+    const circleSource = map.getSource("audio-circles");
+    const polygonSource = map.getSource("audio-polygons");
+    if (!circleSource && !polygonSource) return;
+
+    const audioZones = zones.filter(z => z.type === "audio");
+
+    if (circleSource) {
+        circleSource.setData({
+            type: "FeatureCollection",
+            features: audioZones
+                .filter(z => !z.shape || z.shape !== "polygon")
+                .map(z => ({
+                    type: "Feature",
+                    properties: {
+                        id: z.id,
+                        visited: z.visited,
+                        ...(z.customColor ? { customColor: z.customColor } : {})
+                    },
+                    geometry: { type: "Point", coordinates: [z.lng, z.lat] }
+                }))
+        });
+    }
+
+    if (polygonSource) {
+        polygonSource.setData({
+            type: "FeatureCollection",
+            features: audioZones
+                .filter(z => z.shape === "polygon" && Array.isArray(z.polygon))
+                .map(z => ({
+                    type: "Feature",
+                    properties: {
+                        id: z.id,
+                        visited: z.visited,
+                        ...(z.customColor ? { customColor: z.customColor } : {})
+                    },
+                    geometry: {
+                        type: "Polygon",
+                        coordinates: [z.polygon]
+                    }
+                }))
+        });
+    }
+}
+
+function pointInPolygon(point, polygon) {
+    const x = point[1];
+    const y = point[0];
+
+    let inside = false;
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+        const xi = polygon[i][0], yi = polygon[i][1];
+        const xj = polygon[j][0], yj = polygon[j][1];
+
+        const intersect =
+            ((yi > y) !== (yj > y)) &&
+            (x < (xj - xi) * (y - yi) / (yj - yi + 0.0000001) + xi);
+
+        if (intersect) inside = !inside;
+    }
+    return inside;
+}
+
+function checkZones(coords) {
+    zones.forEach(z => {
+        if (z.type !== "audio") return;
+
+        let inside = false;
+
+        if (z.shape === "polygon" && Array.isArray(z.polygon)) {
+            inside = pointInPolygon([coords[0], coords[1]], z.polygon);
+        } else {
+            const dist = distance(coords, [z.lat, z.lng]);
+            inside = dist <= z.radius;
+        }
+
+        if (!z.visited && inside) {
+            z.visited = true;
+            visitedAudioZones++;
+            updateProgress();
+            updateCircleColors();
+            updateNextZoneMarker();
+
+            tgLog("INFO", `ZONE ENTER | id:${z.id} | ${z.audio ? z.audio.split("/").pop() : "no audio"} | visited:${visitedAudioZones}/${totalAudioZones}`);
+
+            // Сохраняем прогресс
+            const visitedIds = zones.filter(z => z.type === "audio" && z.visited).map(z => z.id);
+            saveProgress(visitedIds);
+
+            if (!isDriverMode) {
+                // Предзагрузка следующей зоны
+                const audioZonesList = zones.filter(a => a.type === "audio");
+                const idx = audioZonesList.findIndex(a => a.id === z.id);
+                const next = audioZonesList[idx + 1];
+                if (next && !next.preloadTriggered) {
+                    next.preloadTriggered = true;
+                    let files = [];
+                    if (next.audio) files.push(next.audio);
+                    queuePreload(files, next.id);
+                }
+
+                // Ранний вармап видео для зон с коротким таймингом:
+                // При входе в зону 22 — греем видео зоны 23 (тайминг 2.3 сек)
+                // При входе в зону 25 — греем видео зоны 26 (тайминг 24.5 сек)
+                const earlyVideoWarmup = {
+                    22: ["videos/kamala.mp4"],
+                    25: ["videos/shalyapin1.mp4"]
+                };
+                if (earlyVideoWarmup[z.id]) {
+                    earlyVideoWarmup[z.id].forEach(src => hardPreloadVideo(src));
+                }
+
+                if (z.audio) {
+                    preloadAllMediaForCurrentAudio(z.audio);
+                    playZoneAudio(z.audio, z.id);
+                }
+            }
+        }
+    });
+}
+
+               /* ========================================================
+                  ===================== SUPER DEBUG =======================
+                  ======================================================== */
+
+               function ensureSuperDebug() {
+                   let dbg = document.getElementById("superDebug");
+                   if (!dbg) {
+                       dbg = document.createElement("div");
+                       dbg.id = "superDebug";
+                       dbg.style.position = "fixed";
+                       dbg.style.bottom = "0";
+                       dbg.style.left = "0";
+                       dbg.style.width = "100%";
+                       dbg.style.padding = "8px 10px";
+                       dbg.style.background = "rgba(0,0,0,0.75)";
+                       dbg.style.color = "white";
+                       dbg.style.fontSize = "12px";
+                       dbg.style.fontFamily = "monospace";
+                       dbg.style.zIndex = "99999";
+                       dbg.style.whiteSpace = "pre-line";
+                       dbg.style.display = "block";
+                       document.body.appendChild(dbg);
+                   }
+                   return dbg;
+               }
+
+               function debugUpdate(source, angle, error = "none") {
+                   const dbg = ensureSuperDebug();
+
+                   if (!arrowEl) {
+                       dbg.textContent = "NO ARROW ELEMENT";
+                       return;
+                   }
+
+                   const tr = arrowEl.style.transform || "none";
+                   let computed = "none";
+                   try { computed = window.getComputedStyle(arrowEl).transform; }
+                   catch (e) { computed = "error"; }
+
+                   const ow = arrowEl.offsetWidth;
+                   const oh = arrowEl.offsetHeight;
+
+                   const rect = arrowEl.getBoundingClientRect();
+                   const boxRaw =
+                       `x:${rect.x.toFixed(1)}, y:${rect.y.toFixed(1)}, ` +
+                       `w:${rect.width.toFixed(1)}, h:${rect.height.toFixed(1)}`;
+
+                   const routeDistStr =
+                       (lastRouteDist == null) ? "n/a" : `${lastRouteDist.toFixed(1)}m`;
+                   const routeSegStr =
+                       (lastRouteSegmentIndex == null) ? "n/a" : `${lastRouteSegmentIndex}`;
+
+                   const zoneInfo = lastZoneDebug || "none";
+
+                   dbg.textContent =
+               `SRC: ${source} | ANG: ${isNaN(angle) ? "NaN" : Math.round(angle)}° | ERR: ${error}
+
+--- TRANSFORM ---
+SET:   ${tr}
+COMP:  ${computed}
+
+--- LAYOUT ---
+offset: ${ow}x${oh}
+BOX:    ${boxRaw}
+
+--- STATE ---
+CMP: ${compassActive ? "active" : "inactive"} | H: ${Math.round(smoothAngle)}° | UPD: ${compassUpdates}
+GPS: ${gpsActive ? "on" : "off"} | GPS_ANG: ${gpsAngleLast} | GPS_UPD: ${gpsUpdates}
+
+--- MAP / ROUTE ---
+routeDist: ${routeDistStr} | seg: ${routeSegStr}
+
+--- ZONE ---
+${zoneInfo}
+
+--- PNG ---
+arrow=${arrowPngStatus}, icons=${iconsPngStatus}
+               `;
+               }
+
+               /* ========================================================
+                  ===================== COMPASS LOGIC =====================
+                  ======================================================== */
+
+               function handleIOSCompass(e) {
+                   if (!compassActive) return;
+                   if (!map || !arrowEl) {
+                       debugUpdate("compass", NaN, "NO_MAP_OR_ARROW");
+                       return;
+                   }
+                   if (e.webkitCompassHeading == null) {
+                       debugUpdate("compass", NaN, "NO_HEADING");
+                       return;
+                   }
+
+                   const raw = normalizeAngle(e.webkitCompassHeading);
+
+                   smoothAngle = normalizeAngle(0.8 * smoothAngle + 0.2 * raw);
+                   compassUpdates++;
+
+                   lastMapBearing =
+                       (typeof map.getBearing === "function") ? map.getBearing() : 0;
+
+                   lastCorrectedAngle = normalizeAngle(smoothAngle - lastMapBearing);
+
+                   applyArrowTransform(lastCorrectedAngle);
+
+                   if (followMode && lastCoords) {
+                       map.easeTo({
+                           center: [lastCoords[1], lastCoords[0]],
+                           bearing: smoothAngle,
+                           duration: 300
+                       });
+                   }
+
+                   debugUpdate("compass", lastCorrectedAngle);
+               }
+
+               function startCompass() {
+                   compassActive = true;
+
+                   if (typeof DeviceOrientationEvent !== "undefined" &&
+                       typeof DeviceOrientationEvent.requestPermission === "function") {
+
+                       DeviceOrientationEvent.requestPermission()
+                           .then(state => {
+                               if (state === "granted") {
+                                   window.addEventListener("deviceorientation", handleIOSCompass);
+                               } else {
+                                   debugUpdate("compass", NaN, "PERMISSION_DENIED");
+                               }
+                           })
+                           .catch(() => {
+                               debugUpdate("compass", NaN, "PERMISSION_ERROR");
+                           });
+
+                       return;
+                   }
+
+                   debugUpdate("compass", NaN, "IOS_ONLY");
+               }
+
+               /* ========================================================
+                  ============= DOM-СТРЕЛКА: ПОЗИЦИЯ И ПОВОРОТ ============
+                  ======================================================== */
+
+               function updateArrowPositionFromCoords(coords) {
+                   if (!map || !arrowEl || !coords) return;
+
+                   const lngLat = [coords[1], coords[0]];
+                   const p = map.project(lngLat);
+
+                   arrowEl.style.left = `${p.x}px`;
+                   arrowEl.style.top = `${p.y}px`;
+               }
+
+               function applyArrowTransform(angle) {
+                   if (!arrowEl) return;
+                   const a = isNaN(angle) ? 0 : angle;
+                   arrowEl.style.transform = `translate(-50%, -50%) rotate(${a}deg)`;
+                   arrowEl.style.visibility = "visible";
+                   arrowEl.style.willChange = "transform";
+               }
+
+               function handleMapMove() {
+                   if (!lastCoords) return;
+                   updateArrowPositionFromCoords(lastCoords);
+
+                   const src = compassActive ? "compass" : "gps";
+                   const ang = compassActive ? lastCorrectedAngle : gpsAngleLast;
+                   debugUpdate(src, ang);
+               }
+
+               /* ========================================================
+                  ========== SIMULATE AUDIO ZONE (MANUAL TRIGGER) =========
+                  ======================================================== */
+               function simulateAudioZone(id) {
+    const z = zones.find(z => z.id === id && z.type === "audio");
+    if (!z) return;
+
+    if (!window.__simUserGestureBound) {
+        window.__simUserGestureBound = true;
+        document.body.addEventListener("click", () => {
+            globalAudio.play().catch(() => {});
+        }, { once: true });
+    }
+
+    if (!z.visited) {
+        z.visited = true;
+        visitedAudioZones++;
+        // Сохраняем прогресс
+        const visitedIds = zones.filter(z => z.type === "audio" && z.visited).map(z => z.id);
+        saveProgress(visitedIds);
+    }
+    updateProgress();
+    updateCircleColors();
+    updateNextZoneMarker(); // перепрыгиваем стрелку на следующую зону
+
+    if (z.audio) {
+        window.__currentZoneId = id;
+        if (!audioEnabled) audioEnabled = true;
+        preloadAllMediaForCurrentAudio(z.audio);
+
+        globalAudio.pause();
+        globalAudio.removeAttribute("src");
+        globalAudio.load();
+        globalAudio.src = z.audio;
+        globalAudio.currentTime = 0;
+
+        globalAudio.ontimeupdate = null;
+
+        setupPhotoTimingsForAudio(globalAudio, id);
+
+        globalAudio.play().catch(() => {});
+
+        audioPlaying = true;
+        globalAudio.onended = () => audioPlaying = false;
+    }
+
+    console.log("Simulated audio zone:", id);
+}
+
+               /* ========================================================
+   ===================== SMOOTH GPS ========================
+   ======================================================== */
+
+function updateRouteProgress(passedCoords, remainingCoords) {
+    function toMultiLine(flatCoords) {
+        const lines = [];
+        for (let i = 0; i + 1 < flatCoords.length; i += 2) {
+            lines.push([flatCoords[i], flatCoords[i + 1]]);
+        }
+        return lines;
+    }
+    map.getSource("route-passed").setData({
+        type: "Feature",
+        geometry: { type: "MultiLineString", coordinates: toMultiLine(passedCoords) }
+    });
+    map.getSource("route-remaining").setData({
+        type: "Feature",
+        geometry: { type: "MultiLineString", coordinates: toMultiLine(remainingCoords) }
+    });
+}
+
+let smoothMoving = false;
+
+// FIX: плавность GPS — больше шагов, меньше задержка (было 12/50ms, стало 20/30ms)
+async function smoothMoveTo(target, steps = 20, delay = 30) {
+    if (!lastCoords) {
+        moveMarker(target);
+        return;
+    }
+
+    if (smoothMoving) return;
+    smoothMoving = true;
+
+    const a = lastCoords;
+    const b = target;
+
+    for (let t = 0; t <= 1; t += 1 / steps) {
+        const lat = a[0] + (b[0] - a[0]) * t;
+        const lng = a[1] + (b[1] - a[1]) * t;
+
+        moveMarker([lat, lng]);
+        await new Promise(r => setTimeout(r, delay));
+    }
+
+    smoothMoving = false;
+}
+
+/* ========================================================
+   ===================== MOVE MARKER =======================
+   ======================================================== */
+function moveMarker(coords) {
+                   if (!tourStarted) return;
+
+                   const prevCoords = lastCoords;
+                   lastCoords = coords;
+
+                   updateArrowPositionFromCoords(coords);
+
+if (isDriverMode && followMode) {
+    // В режиме водителя — просто центрируем без поворота карты
+    map.easeTo({
+        center: [coords[1], coords[0]],
+        duration: 300
+    });
+} else if (!compassActive && prevCoords) {
+    const angle = calculateAngle(prevCoords, coords);
+    gpsAngleLast = Math.round(angle);
+    gpsUpdates++;
+
+    applyArrowTransform(angle);
+
+    if (followMode) {
+        map.easeTo({
+            center: [coords[1], coords[0]],
+            bearing: angle,
+            duration: 300
+        });
+    }
+}
+
+               // FIX: ищем ближайший сегмент, пропуская стыки между сегментами маршрута
+               let nearestIndex = null;
+               let nearestDist = Infinity;
+               let nearestProj = null;
+               let nearestT = 0;
+
+               for (let i = 0; i < fullRoute.length - 1; i++) {
+                   // Пропускаем стык: не соединяем конец одного сегмента с началом следующего
+                   if (segmentBoundaries.has(i + 1)) continue;
+
+                   const a = fullRoute[i].coord;
+                   const b = fullRoute[i + 1].coord;
+
+                   const info = pointToSegmentInfo([coords[0], coords[1]], a, b);
+
+                   if (info.dist < nearestDist) {
+                       nearestDist = info.dist;
+                       nearestIndex = i;
+                       nearestProj = info.projLngLat;
+                       nearestT = info.t;
+                   }
+               }
+
+               if (nearestDist > 12) return;
+
+               const passedCoords = [];
+               const remainingCoords = [];
+
+               // 1) все сегменты ДО текущего — пройденные, пропускаем стыки
+               for (let i = 0; i < nearestIndex; i++) {
+                   if (segmentBoundaries.has(i + 1)) continue;
+                   passedCoords.push(fullRoute[i].coord);
+                   passedCoords.push(fullRoute[i + 1].coord);
+               }
+
+               // 2) текущий сегмент — частичная перекраска
+               const segA = fullRoute[nearestIndex].coord;
+               const segB = fullRoute[nearestIndex + 1].coord;
+
+               passedCoords.push(segA);
+               passedCoords.push(nearestProj);
+
+               remainingCoords.push(nearestProj);
+               remainingCoords.push(segB);
+
+               // 3) все сегменты ПОСЛЕ текущего — оставшиеся, пропускаем стыки
+               for (let i = nearestIndex + 1; i < fullRoute.length - 1; i++) {
+                   if (segmentBoundaries.has(i + 1)) continue;
+                   remainingCoords.push(fullRoute[i].coord);
+                   remainingCoords.push(fullRoute[i + 1].coord);
+               }
+
+                  updateRouteProgress(passedCoords, remainingCoords);
+
+                   checkZones(coords);
+
+                   const src = compassActive ? "compass" : "gps";
+                   const ang = compassActive ? lastCorrectedAngle : gpsAngleLast;
+                   debugUpdate(src, ang);
+               }
+
+               /* ========================================================
+                  ================== SIMULATION STEP ======================
+                  ======================================================== */
+               function simulateNextStep() {
+                   if (!simulationActive) return;
+
+                   if (audioPlaying) {
+                       setTimeout(simulateNextStep, 300);
+                       return;
+                   }
+
+                   if (simulationIndex >= simulationPoints.length) {
+                       simulationActive = false;
+                       gpsActive = true;
+                       return;
+                   }
+
+                   const next = simulationPoints[simulationIndex];
+
+                   moveMarker(next);
+
+                   simulationIndex++;
+                   setTimeout(simulateNextStep, 1200);
+               }
+
+               /* ========================================================
+                  ================== START SIMULATION =====================
+                  ======================================================== */
+
+               function startSimulation() {
+                   if (!simulationPoints.length) return;
+
+                   simulationActive = true;
+                   gpsActive = false;
+                   compassActive = false;
+
+                   simulationIndex = 0;
+
+                   moveMarker(simulationPoints[0]);
+
+                   map.easeTo({
+                       center: [simulationPoints[0][1], simulationPoints[0][0]],
+                       duration: 500
+                   });
+
+                   setTimeout(simulateNextStep, 1200);
+               }
+
+/* ========================================================
+   ======================= INIT MAP ========================
+   ======================================================== */
+
+               async function initMap() {
+
+                  map = new maplibregl.Map({
+    container: "map",
+    style: "style.json?v=2",
+    center: [49.12169747999815, 55.7872919881855],
+    zoom: 12,
+    bearing: -141.20322070183164
+});
+
+                   const mapContainer = document.getElementById("map");
+                   if (mapContainer && getComputedStyle(mapContainer).position === "static") {
+                       mapContainer.style.position = "relative";
+                   }
+
+                   map.on("load", async () => {
+                     globalAudio = document.getElementById("globalAudio");
+                     globalAudio.muted = false;
+                     globalAudio.autoplay = true;
+                     globalAudio.load();
+
+                     map.getCanvas().addEventListener("pointerdown", () => {
+    userTouching = true;
+    followMode = false;
+    if (followTimeout) clearTimeout(followTimeout);
+});
+
+             map.getCanvas().addEventListener("pointerup", () => {
+    userTouching = false;
+    if (followTimeout) clearTimeout(followTimeout);
+    followTimeout = setTimeout(() => followMode = true, 3000);
+});
+
+              map.getCanvas().addEventListener("pointercancel", () => {
+    userTouching = false;
+    if (followTimeout) clearTimeout(followTimeout);
+    followTimeout = setTimeout(() => followMode = true, 3000);
+});
+
+                      map.on("movestart", () => userInteracting = true);
+                      map.on("moveend", () => userInteracting = false);
+
+               ["route", "route-line", "route-hack-line"].forEach(id => {
+                   if (map.getLayer(id)) map.removeLayer(id);
+                   if (map.getSource(id)) map.removeSource(id);
+               });
+
+               updateProgress();
+
+              /* ========================================================
+   ======================= LOAD DATA =======================
+   ======================================================== */
+
+const points = await fetch("points.json").then(r => r.json());
+const route  = await fetch("route.json").then(r => r.json());
+
+const routeSegmentCoords = [];
+
+route.features.forEach(f => {
+    if (f.geometry && f.geometry.type === "LineString") {
+        routeSegmentCoords.push(f.geometry.coordinates);
+    }
+});
+
+let allCoords = [];
+routeSegmentCoords.forEach(seg => {
+    allCoords = allCoords.concat(seg);
+});
+
+fullRoute = allCoords.map(c => ({ coord: [c[0], c[1]] }));
+
+// FIX: вычисляем индексы стыков между сегментами
+segmentBoundaries.clear();
+let boundaryOffset = 0;
+routeSegmentCoords.forEach((seg, si) => {
+    if (si > 0) segmentBoundaries.add(boundaryOffset);
+    boundaryOffset += seg.length;
+});
+
+simulationPoints = allCoords.map(c => [c[1], c[0]]);
+
+const bounds = new maplibregl.LngLatBounds();
+allCoords.forEach(c => bounds.extend([c[0], c[1]]));
+map.fitBounds(bounds, { padding: 50, duration: 0 });
+
+setTimeout(() => {
+    map.easeTo({
+        center: [49.12169747999815, 55.7872919881855],
+        zoom: 16.125383373632552,
+        duration: 1500
+    });
+    // Создаём стрелку только когда карта реально остановилась
+    map.once("moveend", () => updateNextZoneMarker());
+}, 4000);map.addSource("route-remaining", {
+    type: "geojson",
+    data: {
+        type: "Feature",
+        geometry: { type: "MultiLineString", coordinates: routeSegmentCoords }
+    }
+});
+
+map.addSource("route-passed", {
+    type: "geojson",
+    data: {
+        type: "Feature",
+        geometry: { type: "MultiLineString", coordinates: [] }
+    }
+});
+
+map.addLayer({
+    id: "route-remaining-line",
+    type: "line",
+    source: "route-remaining",
+    layout: { "line-join": "round", "line-cap": "round" },
+    paint: { "line-width": 4, "line-color": "#007aff" }
+});
+
+map.addLayer({
+    id: "route-passed-line",
+    type: "line",
+    source: "route-passed",
+    layout: { "line-join": "round", "line-cap": "round" },
+    paint: { "line-width": 4, "line-color": "#333333" }
+});
+
+const circleFeatures = [];
+const polygonFeatures = [];
+
+points.forEach(p => {
+    zones.push({
+        id: p.id,
+        name: p.name,
+        lat: p.lat,
+        lng: p.lng,
+        radius: p.radius || 20,
+        visited: false,
+        entered: false,
+        type: p.type,
+        audio: p.audio || null,
+        image: p.image || null,
+        icon: p.icon || null,
+        shape: p.shape || null,
+        polygon: p.polygon || null,
+        customColor: p.customColor || null
+    });
+
+    if (p.type === "audio" && p.id !== 0) totalAudioZones++;
+
+    if (p.type === "audio") {
+        if (p.shape === "polygon" && Array.isArray(p.polygon)) {
+            polygonFeatures.push({
+                type: "Feature",
+                properties: {
+                    id: p.id,
+                    visited: false,
+                    ...(p.customColor ? { customColor: p.customColor } : {})
+                },
+                geometry: { type: "Polygon", coordinates: [p.polygon] }
+            });
+            return;
+        }
+
+        circleFeatures.push({
+            type: "Feature",
+            properties: {
+                id: p.id,
+                visited: false,
+                ...(p.customColor ? { customColor: p.customColor } : {})
+            },
+            geometry: { type: "Point", coordinates: [p.lng, p.lat] }
+        });
+    }
+
+    if (p.type === "media") {
+        const el = document.createElement("img");
+        el.src = p.icon;
+        el.style.width = "40px";
+        el.style.height = "40px";
+        el.style.cursor = "pointer";
+        el.style.willChange = "transform";
+        el.onclick = () => {
+            if (p.photo) showFullscreenMedia(p.photo, "photo");
+            if (p.video) showFullscreenMedia(p.video, "video");
+        };
+        new maplibregl.Marker({ element: el }).setLngLat([p.lng, p.lat]).addTo(map);
+    }
+
+    if (p.type === "mediaMenu") {
+        if (isDriverMode) return; // водителю не нужны
+        const el = document.createElement("img");
+        el.src = p.icon;
+        el.style.width = "40px";
+        el.style.height = "40px";
+        el.style.cursor = "pointer";
+        el.style.willChange = "transform";
+        el.onclick = () => openMediaMenu(p);
+        new maplibregl.Marker({ element: el }).setLngLat([p.lng, p.lat]).addTo(map);
+    }
+});
+
+zones.filter(p => p.type === "square").forEach(p => {
+    if (isDriverMode) return; // водителю не нужны декоративные маркеры
+    const el = document.createElement("div");
+    el.style.width = "40px";
+    el.style.height = "40px";
+    el.style.display = "flex";
+    el.style.alignItems = "center";
+    el.style.justifyContent = "center";
+    el.style.transform = "translate(-50%, -50%)";
+    el.style.pointerEvents = "none";
+    el.style.willChange = "transform";
+
+    const img = document.createElement("img");
+    img.src = p.icon;
+    img.style.width = "32px";
+    img.style.height = "32px";
+    img.style.objectFit = "contain";
+    img.onload = () => { iconsPngStatus = "ok"; };
+    img.onerror = () => {
+        iconsPngStatus = "error";
+        debugUpdate("none", null, "PNG_LOAD_FAIL");
+    };
+
+    el.appendChild(img);
+    new maplibregl.Marker({ element: el, anchor: "center" }).setLngLat([p.lng, p.lat]).addTo(map);
+});
+
+map.addSource("audio-polygons", {
+    type: "geojson",
+    data: { type: "FeatureCollection", features: polygonFeatures }
+});
+
+map.addSource("audio-circles", {
+    type: "geojson",
+    data: { type: "FeatureCollection", features: circleFeatures }
+});
+
+map.addLayer({
+    id: "audio-polygons-layer",
+    type: "fill",
+    source: "audio-polygons",
+    paint: {
+        "fill-color": [
+            "case",
+            ["boolean", ["get", "visited"], false], "rgba(0,255,0,0.25)",
+            ["has", "customColor"], ["get", "customColor"],
+            "rgba(255,0,0,0.15)"
+        ],
+        "fill-opacity": 1,
+        "fill-outline-color": "rgba(0,0,0,0.3)"
+    }
+});
+
+map.addLayer({
+    id: "audio-circles-layer",
+    type: "circle",
+    source: "audio-circles",
+    paint: {
+        "circle-radius": 0,
+        "circle-color": [
+            "case",
+            ["boolean", ["get", "visited"], false], "rgba(0,255,0,0.25)",
+            ["has", "customColor"], ["get", "customColor"],
+            "rgba(255,0,0,0.15)"
+        ],
+        "circle-stroke-color": [
+            "case",
+            ["boolean", ["get", "visited"], false], "rgba(0,255,0,0.6)",
+            ["has", "customColor"], ["get", "customColor"],
+            "rgba(255,0,0,0.4)"
+        ],
+        "circle-stroke-width": 2
+    }
+});
+
+map.on("click", "audio-circles-layer", (e) => {
+    const id = e.features[0].properties.id;
+    simulateAudioZone(id);
+});
+map.on("click", "audio-polygons-layer", (e) => {
+    const id = e.features[0].properties.id;
+    simulateAudioZone(id);
+});
+
+function updateAudioCircleRadius() {
+    const zoom = map.getZoom();
+    const center = map.getCenter();
+    const lat = center.lat;
+    const metersPerPixel =
+        156543.03392 * Math.cos(lat * Math.PI / 180) / Math.pow(2, zoom);
+
+    zones.forEach(z => {
+        if (z.type === "audio") {
+            const radiusPixels = z.radius / metersPerPixel;
+            map.setPaintProperty("audio-circles-layer", "circle-radius", radiusPixels);
+        }
+    });
+}
+
+map.on("zoom", updateAudioCircleRadius);
+map.on("load", updateAudioCircleRadius);
+
+const photoCircleFeatures = zones
+    .filter(z => z.type === "square" && z.image)
+    .map(z => ({
+        type: "Feature",
+        properties: { id: z.id },
+        geometry: { type: "Point", coordinates: [z.lng, z.lat] }
+    }));
+
+map.addSource("photo-circles", {
+    type: "geojson",
+    data: { type: "FeatureCollection", features: photoCircleFeatures }
+});
+
+map.addLayer({
+    id: "photo-circles-layer",
+    type: "circle",
+    source: "photo-circles",
+    paint: {
+        "circle-radius": 30,
+        "circle-color": "rgba(0,0,255,0.08)",
+        "circle-stroke-color": "rgba(0,0,255,0.3)",
+        "circle-stroke-width": 1
+    }
+});
+
+               arrowEl = document.createElement("div");
+               arrowEl.innerHTML = `
+               <svg viewBox="0 0 100 100" width="40" height="40" xmlns="http://www.w3.org/2000/svg">
+                 <polygon points="50,5 90,95 50,75 10,95" fill="currentColor"/>
+               </svg>
+               `;
+               arrowEl.style.position = "absolute";
+               arrowEl.style.left = "50%";
+               arrowEl.style.top = "50%";
+               arrowEl.style.transformOrigin = "center center";
+               arrowEl.style.pointerEvents = "none";
+               arrowEl.style.zIndex = "9999";
+               arrowEl.style.color = "#00ff00";
+
+               applyArrowTransform();
+
+               if (mapContainer) {
+                   mapContainer.appendChild(arrowEl);
+               } else {
+                   document.body.appendChild(arrowEl);
+               }
+
+                       let _lastLoggedGPS = null;
+                       if (navigator.geolocation) {
+                           navigator.geolocation.watchPosition(
+                               pos => {
+                                   if (!gpsActive) return;
+                                   const lat = pos.coords.latitude;
+                                   const lng = pos.coords.longitude;
+                                   const acc = Math.round(pos.coords.accuracy);
+                                   // Логируем GPS только если сдвинулись больше 5м
+                                   if (!_lastLoggedGPS || distance([lat, lng], _lastLoggedGPS) > 5) {
+                                       _lastLoggedGPS = [lat, lng];
+                                       tgLog("GPS", `lat:${lat.toFixed(5)} lng:${lng.toFixed(5)} acc:${acc}m`);
+                                   }
+                                   smoothMoveTo([lat, lng]);
+                               },
+                               err => {
+                                   tgLog("ERROR", `GPS error: ${err.message} (code:${err.code})`);
+                                   _flushLogs();
+                               },
+                               { enableHighAccuracy: true }
+                           );
+                       }
+
+                       map.on("move", handleMapMove);
+
+                       console.log("Карта готова");
+
+                       // [DRIVER MODE] авто-старт без кнопки
+                       if (isDriverMode) {
+                           tourStarted = true;
+                           gpsActive = true;
+                           compassActive = true;
+                           const startBtnEl = document.getElementById("startTourBtn");
+                           if (startBtnEl) startBtnEl.style.display = "none";
+                           requestWakeLock();
+                       }
+
+                       // [PROGRESS] Восстанавливаем прогресс из localStorage
+                       if (!isDriverMode) {
+                           const savedIds = loadProgress();
+                           if (savedIds.length > 0) {
+                               applyProgress(savedIds);
+                               // Если маршрут уже пройден — показываем экран завершения
+                               if (isRouteCompleted()) {
+                                   setTimeout(() => showCompletedScreen(), 500);
+                               }
+                           }
+                       }
+
+                       // стрелка инициализируется после easeTo (см. ниже в initMap)
+                   });
+
+/* ========================================================
+   ========== UNIVERSAL MEDIA MENU (ALL ZONES) ============
+   ======================================================== */
+
+function openMediaMenu(p) {
+    window.__mediaMenuMode = true;
+
+    let overlay = document.getElementById("mediaMenuUniversal");
+    if (!overlay) createMediaMenuUniversal();
+
+    overlay = document.getElementById("mediaMenuUniversal");
+    const sheet = document.getElementById("mediaMenuUniversalSheet");
+
+    const titleEl = document.getElementById("mmTitle");
+    titleEl.innerHTML = `
+        <div style="display:flex; align-items:center; gap:8px;">
+            <img src="${p.icon}" style="width:22px; height:22px; object-fit:contain;">
+            <span>${p.title || ""}</span>
+        </div>
+    `;
+    titleEl.style.color = "#ffffff";
+    titleEl.style.textShadow = "0 0 26px rgba(255,255,255,1), 0 0 14px rgba(255,255,255,0.9), 0 0 6px rgba(255,255,255,0.8)";
+
+    const descEl = document.getElementById("mmDesc");
+    descEl.textContent = p.description || "";
+    descEl.style.color = "#ffffff";
+    descEl.style.textShadow = "0 0 4px rgba(255,255,255,0.35)";
+
+    const photoBtn = document.getElementById("mmPhotoBtn");
+    const videoBtn = document.getElementById("mmVideoBtn");
+    const preview = document.getElementById("mmPreview");
+
+    preview.innerHTML = "";
+    preview.style.display = "none";
+
+    if (p.photos && p.photos.length > 0) {
+        photoBtn.style.display = "block";
+
+        photoBtn.onclick = () => {
+            preview.innerHTML = "";
+            preview.style.display = "flex";
+
+            p.photos.forEach(src => {
+                const box = document.createElement("div");
+                box.style.width = "80px";
+                box.style.height = "80px";
+                box.style.borderRadius = "10px";
+                box.style.overflow = "hidden";
+                box.style.cursor = "pointer";
+                box.style.background = "#000";
+                box.style.border = "1px solid rgba(255,255,255,0.1)";
+                box.style.transition = "transform 0.15s ease";
+                box.onmouseover = () => box.style.transform = "scale(1.05)";
+                box.onmouseout = () => box.style.transform = "scale(1)";
+
+                const img = document.createElement("img");
+                img.src = src;
+                img.style.width = "100%";
+                img.style.height = "100%";
+                img.style.objectFit = "cover";
+
+                box.appendChild(img);
+                box.onclick = () => {
+                    window.__fsGallery = p.photos.slice();
+                    window.__fsIndex = p.photos.indexOf(src);
+                    showFullscreenMedia(src, "photo");
+                };
+
+                preview.appendChild(box);
+            });
+        };
+    } else {
+        photoBtn.style.display = "none";
+    }
+
+    if (p.video) {
+        videoBtn.style.display = "block";
+        videoBtn.onclick = () => showFullscreenMedia(p.video, "video");
+    } else {
+        videoBtn.style.display = "none";
+    }
+
+    overlay.style.display = "flex";
+    requestAnimationFrame(() => {
+        sheet.style.transform = "translateY(0)";
+    });
+
+    function addButtonEffects(btn) {
+        if (!btn) return;
+        btn.style.transition = "transform 0.12s ease";
+        const press = () => btn.style.transform = "scale(0.96)";
+        const release = () => btn.style.transform = "scale(1)";
+        btn.onmousedown = press;
+        btn.onmouseup = release;
+        btn.onmouseleave = release;
+        btn.ontouchstart = press;
+        btn.ontouchend = release;
+        btn.ontouchcancel = release;
+    }
+
+    addButtonEffects(photoBtn);
+    addButtonEffects(videoBtn);
+}
+
+function closeMediaMenuUniversal() {
+    window.__mediaMenuMode = false;
+    const overlay = document.getElementById("mediaMenuUniversal");
+    const sheet = document.getElementById("mediaMenuUniversalSheet");
+    sheet.style.transform = "translateY(100%)";
+    setTimeout(() => overlay.style.display = "none", 250);
+}
+
+function createMediaMenuUniversal() {
+    const overlay = document.createElement("div");
+    overlay.id = "mediaMenuUniversal";
+    overlay.style.position = "fixed";
+    overlay.style.left = "0";
+    overlay.style.top = "0";
+    overlay.style.width = "100%";
+    overlay.style.height = "100%";
+    overlay.style.background = "rgba(0,0,0,0.4)";
+    overlay.style.display = "none";
+    overlay.style.zIndex = "200000";
+    overlay.style.alignItems = "flex-end";
+    overlay.style.justifyContent = "center";
+
+    const sheet = document.createElement("div");
+    sheet.id = "mediaMenuUniversalSheet";
+    sheet.style.width = "100%";
+    sheet.style.background = "#1c1c1e";
+    sheet.style.boxShadow = "0 -4px 20px rgba(0,0,0,0.4)";
+    sheet.style.borderTopLeftRadius = "16px";
+    sheet.style.borderTopRightRadius = "16px";
+    sheet.style.padding = "20px";
+    sheet.style.boxSizing = "border-box";
+    sheet.style.transform = "translateY(100%)";
+    sheet.style.transition = "transform 0.25s ease-out";
+
+    sheet.innerHTML = `
+        <div id="mmTitle" style="font-size:18px; margin-bottom:8px;"></div>
+        <div id="mmDesc" style="font-size:14px; margin-bottom:16px;"></div>
+        <div style="height:1px; background:rgba(255,255,255,0.08); margin:12px 0;"></div>
+        <button id="mmPhotoBtn"
+            style="width:100%; padding:14px; font-size:16px; margin-bottom:10px;
+                   border-radius:10px; border:none;
+                   background:linear-gradient(180deg,#30d158 0%,#1fa347 100%);
+                   color:#fff; font-weight:500;">Фото</button>
+        <button id="mmVideoBtn"
+            style="width:100%; padding:14px; font-size:16px; margin-bottom:10px;
+                   border-radius:10px; border:none;
+                   background:linear-gradient(180deg,#0a84ff 0%,#0066cc 100%);
+                   color:#fff; font-weight:500;">Видео</button>
+        <div id="mmPreview"
+             style="display:none; margin-top:16px; gap:10px; justify-content:center;"></div>
+    `;
+
+    overlay.appendChild(sheet);
+    document.body.appendChild(overlay);
+
+    overlay.onclick = e => {
+        if (e.target === overlay) closeMediaMenuUniversal();
+    };
+}
+
+/* ========================================================
+   ===================== START TOUR BTN ====================
+   ======================================================== */
+
+let __audioUnlocked = false;
+let __videoUnlocked = false;
+let __audioContext = null;
+
+// FIX: WakeLock — держим экран включённым пока идёт тур
+let __wakeLock = null;
+
+async function requestWakeLock() {
+    if (!('wakeLock' in navigator)) return;
+    try {
+        __wakeLock = await navigator.wakeLock.request('screen');
+        console.log('WakeLock активен — экран не погаснет');
+    } catch (e) {
+        console.warn('WakeLock недоступен:', e);
+    }
+}
+
+// FIX: при возврате из фона — переподключаем WakeLock и AudioContext
+document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState === 'visible') {
+        if (tourStarted && (!__wakeLock || __wakeLock.released)) {
+            await requestWakeLock();
+        }
+        if (__audioContext && __audioContext.state === 'suspended') {
+            __audioContext.resume().catch(() => {});
+        }
+    }
+});
+
+async function unlockAudioIOS() {
+    if (__audioUnlocked) return;
+
+    try {
+        __audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        await __audioContext.resume();
+
+        const buffer = __audioContext.createBuffer(1, 1, 22050);
+        const source = __audioContext.createBufferSource();
+        source.buffer = buffer;
+        source.connect(__audioContext.destination);
+        source.start(0);
+
+        __audioUnlocked = true;
+    } catch (e) {
+        console.warn("Audio unlock failed:", e);
+    }
+}
+
+async function unlockVideoIOS() {
+    if (__videoUnlocked) return;
+
+    try {
+        const v = document.createElement("video");
+        v.muted = true;
+        v.playsInline = true;
+        v.setAttribute("playsinline", "true");
+        v.setAttribute("webkit-playsinline", "true");
+        v.src = "data:video/mp4;base64,";
+        await v.play().catch(()=>{});
+        __videoUnlocked = true;
+    } catch (e) {
+        console.warn("Video unlock failed:", e);
+    }
+}
+
+const startBtn = document.getElementById("startTourBtn");
+
+// Слушаем событие от онбординга
+document.addEventListener("kzn:startTour", () => {
+    if (startBtn) startBtn.click();
+});
+
+if (startBtn) {
+    startBtn.onclick = () => {
+
+        tourStarted = true;
+        gpsActive = true;
+
+        tgLog("INFO", `TOUR START | ${_device} | user:${_tgUser}`);
+        _flushLogs();
+
+        // Центрируем карту на первую зону при старте
+        const firstZone = zones.find(z => z.type === "audio" && !z.visited);
+        if (firstZone) {
+            map.easeTo({
+                center: [firstZone.lng, firstZone.lat],
+                zoom: 16.5,
+                duration: 800
+            });
+        }
+
+        try {
+            compassActive = true;
+
+            const isIOS =
+                typeof DeviceOrientationEvent !== "undefined" &&
+                typeof DeviceOrientationEvent.requestPermission === "function";
+
+            const ua = navigator.userAgent.toLowerCase();
+            const isAndroid = ua.includes("android");
+
+            if (isIOS) {
+                DeviceOrientationEvent.requestPermission()
+                    .then(state => {
+                        if (state === "granted") {
+                            window.addEventListener("deviceorientation", handleIOSCompass);
+                        } else {
+                            console.warn("iOS: compass denied");
+                        }
+                    })
+                    .catch(err => {
+                        console.warn("iOS compass error:", err);
+                    });
+
+            } else if (isAndroid) {
+                window.addEventListener("deviceorientation", e => {
+                    if (!compassActive) return;
+                    if (e.alpha == null || e.beta == null || e.gamma == null) {
+                        debugUpdate("compass", NaN, "NO_ALPHA");
+                        return;
+                    }
+
+                    // Вычисляем истинный азимут через матрицу поворота
+                    // Корректно работает при любом наклоне телефона (вертикально, в держателе и т.д.)
+                    const toRad = Math.PI / 180;
+                    const alpha = e.alpha * toRad;
+                    const beta  = e.beta  * toRad;
+                    const gamma = e.gamma * toRad;
+
+                    const sa = Math.sin(alpha), ca = Math.cos(alpha);
+                    const sb = Math.sin(beta),  cb = Math.cos(beta);
+                    const sg = Math.sin(gamma), cg = Math.cos(gamma);
+
+                    // Проекция вектора "вперёд" устройства на горизонтальную плоскость
+                    const Vx = sa * sg - ca * sb * cg;
+                    const Vy = ca * sg + sa * sb * cg;
+
+                    const heading = Math.atan2(Vx, Vy) * (180 / Math.PI);
+                    const raw = normalizeAngle(heading);
+
+                    smoothAngle = normalizeAngle(0.85 * smoothAngle + 0.15 * raw);
+                    compassUpdates++;
+                    lastMapBearing = (typeof map.getBearing === "function") ? map.getBearing() : 0;
+                    lastCorrectedAngle = normalizeAngle(smoothAngle - lastMapBearing);
+                    applyArrowTransform(lastCorrectedAngle);
+                    if (followMode && lastCoords) {
+                        map.easeTo({
+                            center: [lastCoords[1], lastCoords[0]],
+                            bearing: smoothAngle,
+                            duration: 300
+                        });
+                    }
+                    debugUpdate("compass", lastCorrectedAngle);
+                });
+            }
+
+        } catch (err) {
+            console.warn("Compass error:", err);
+        }
+
+        unlockAudioIOS();
+        unlockVideoIOS();
+
+        // FIX: запрашиваем WakeLock при старте тура
+        requestWakeLock();
+
+        const intro = new Audio("audio/start.m4a");
+window.__currentZoneId = 0;
+setupPhotoTimingsForAudio(intro, 0);
+intro.play().catch(()=>{});
+
+        startBtn.style.display = "none";
+    };
+}
+
+const heavyZones = [5, 8, 24, 25, 26];
+
+heavyZones.forEach(id => {
+    const z = zones.find(z => z.id === id);
+    if (!z || !z.audio) return;
+
+    let files = [];
+    files.push(z.audio);
+
+    const key = "audio/" + z.audio.split("/").pop();
+
+    const p = photoTimings[key];
+    if (p) {
+        for (const t in p) files.push(p[t].open);
+    }
+
+    const v = videoTimings[key];
+    if (v) {
+        for (const t in v) files.push(v[t].open);
+    }
+
+    queuePreload(files, id);
+});
+
+               ensureSuperDebug();
+               debugUpdate("init", 0, "INIT");
+               }
+
+               /* ========================================================
+                  ====================== DOM EVENTS =======================
+                  ======================================================== */
+
+/* ========================================================
+   === NEXT ZONE ARROW — игровая прыгающая стрелка
+   ======================================================== */
+
+// Инжектим CSS анимацию один раз
+(function injectNextZoneCSS() {
+    const style = document.createElement("style");
+    style.textContent = `
+        @keyframes nextZoneBounce {
+            0%   { transform: translateY(0px) perspective(200px) rotateX(20deg); }
+            40%  { transform: translateY(-14px) perspective(200px) rotateX(20deg); }
+            60%  { transform: translateY(-14px) perspective(200px) rotateX(20deg); }
+            100% { transform: translateY(0px) perspective(200px) rotateX(20deg); }
+        }
+        .next-zone-arrow-inner {
+            animation: nextZoneBounce 0.9s ease-in-out infinite;
+            pointer-events: none;
+            transform-origin: center bottom;
+            display: block;
+        }
+    `;
+    document.head.appendChild(style);
+})();
+
+function createNextZoneArrowEl() {
+    // Внешний div — якорь маркера, transform трогать нельзя
+    const el = document.createElement("div");
+    el.style.width = "50px";
+    el.style.height = "60px";
+    el.style.pointerEvents = "none";
+
+    // Внутренний div — только на него вешаем анимацию
+    const inner = document.createElement("div");
+    inner.className = "next-zone-arrow-inner";
+    inner.innerHTML = `
+        <svg width="50" height="60" viewBox="0 0 50 60" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+                <filter id="nzGlow">
+                    <feGaussianBlur stdDeviation="2.5" result="blur"/>
+                    <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                </filter>
+            </defs>
+            <rect x="18" y="2" width="14" height="28" rx="4"
+                fill="#00e05a" filter="url(#nzGlow)"/>
+            <polygon points="25,58 4,28 46,28"
+                fill="#00e05a" filter="url(#nzGlow)"/>
+            <rect x="21" y="4" width="5" height="20" rx="2"
+                fill="rgba(255,255,255,0.35)"/>
+        </svg>
+    `;
+
+    el.appendChild(inner);
+    return el;
+}
+
+function updateNextZoneMarker() {
+    if (isDriverMode) return; // водителю не нужна
+
+    // Находим первую непосещённую аудиозону
+    const audioZones = zones.filter(z => z.type === "audio");
+    const next = audioZones.find(z => !z.visited && z.id !== 0);
+
+    // Удаляем старый маркер
+    if (nextZoneMarker) {
+        nextZoneMarker.remove();
+        nextZoneMarker = null;
+    }
+
+    if (!next || !map) return;
+
+    const lat = next.lat;
+    const lng = next.lng;
+
+    // Для полигональных зон берём центр первой точки
+    const lngLat = (next.shape === "polygon" && Array.isArray(next.polygon))
+        ? [next.polygon[0][0], next.polygon[0][1]]
+        : [lng, lat];
+
+    const el = createNextZoneArrowEl();
+
+    nextZoneMarker = new maplibregl.Marker({
+        element: el,
+        anchor: "bottom",
+        offset: [0, -20]
+    })
+    .setLngLat(lngLat)
+    .addTo(map);
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+    const ok = await checkAccess();
+    if (ok) initMap();
+});
+
+/* ==================== END OF APP.JS ====================== */

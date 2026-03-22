@@ -1,0 +1,41 @@
+[
+  {
+    "id": 0,
+    "type": "audio",
+    "lat": 55.78592035400666,
+    "lng": 49.12014091380297,
+    "radius": 1,
+    "audio": "audio/start.m4a"
+  },
+  {
+    "id": 1,
+    "type": "audio",
+    "lat": 55.78592035400666,
+    "lng": 49.12014091380297,
+    "radius": 25,
+    "audio": "audio/1-2005.m4a"
+  },
+  {
+    "id": 2,
+    "type": "audio",
+    "lat": 55.789079,
+    "lng": 49.11208,
+    "radius": 25,
+    "audio": "audio/2-bulak.m4a"
+  },
+  {
+    "id": 3,
+    "type": "audio",
+    "lat": 55.796,
+    "lng": 49.104035,
+    "radius": 25,
+    "audio": "audio/3-ploschad-tisyacheletia.m4a"
+  },
+  {
+    "id": 201,
+    "type": "square",
+    "lat": 55.787232,
+    "lng": 49.12188,
+    "icon": "icons/start.png"
+  }
+]

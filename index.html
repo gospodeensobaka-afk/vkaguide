@@ -12,7 +12,15 @@
 <script src="app.core.js?v=13" defer></script>
 <script src="app.media.js?v=13" defer></script>
     <script src="https://unpkg.com/@vkontakte/vk-bridge@2.29.0/dist/browser.min.js"></script>
-<script>vkBridge.send('VKWebAppInit');</script>
+<script>
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() {
+      vkBridge.send('VKWebAppInit');
+    });
+  } else {
+    vkBridge.send('VKWebAppInit');
+  }
+</script>
     <script src="app.experimental.js" defer></script>
 </head>
 <body>

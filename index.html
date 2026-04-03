@@ -4,24 +4,25 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Mini Audio Guide</title>
+
+    <!-- VK Bridge — первым, до всего остального -->
+    <script src="https://unpkg.com/@vkontakte/vk-bridge@2.29.0/dist/browser.min.js"></script>
+    <script>
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', function() {
+                vkBridge.send('VKWebAppInit');
+            });
+        } else {
+            vkBridge.send('VKWebAppInit');
+        }
+    </script>
+
     <link rel="stylesheet" href="styles.css">
-    <!-- MapLibre -->
     <link href="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.css" rel="stylesheet" />
     <script src="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.js"></script>
-<script src="onboarding.js?v=13" defer></script>
-<script src="app.core.js?v=13" defer></script>
-<script src="app.media.js?v=13" defer></script>
-    <script src="https://unpkg.com/@vkontakte/vk-bridge@2.29.0/dist/browser.min.js"></script>
-<script>
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function() {
-      vkBridge.send('VKWebAppInit');
-    });
-  } else {
-    vkBridge.send('VKWebAppInit');
-  }
-</script>
-    <script src="app.experimental.js" defer></script>
+    <script src="onboarding.js?v=13" defer></script>
+    <script src="app.core.js?v=13" defer></script>
+    <script src="app.media.js?v=13" defer></script>
 </head>
 <body>
     <!-- AUDIO WRAPPER -->
@@ -33,15 +34,15 @@
         style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); z-index:999999;">
         Начать экскурсию
     </button>
-    <!-- NOT READY BUTTON (перенесена на место компаса) -->
+    <!-- NOT READY BUTTON -->
     <button id="notReadyBtn">
         Не успеваю
     </button>
-    <!-- PROGRESS BAR (справа от "Не успеваю") -->
-   <div id="tourProgress">
-       Пройдено: 0 из 0
-   </div>
-       
+    <!-- PROGRESS BAR -->
+    <div id="tourProgress">
+        Пройдено: 0 из 0
+    </div>
+
     <!-- MAP -->
     <div id="map"></div>
     <!-- PHOTO OVERLAY -->
@@ -53,7 +54,6 @@
     </div>
     <!-- GALLERY OVERLAY -->
     <div id="galleryOverlay" class="hidden"></div>
-
     <script>
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('sw.js');

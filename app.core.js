@@ -1705,7 +1705,7 @@ document.addEventListener("kzn:startTour", () => {
 });
 
 if (startBtn) {
-    startBtn.onclick = async () => {
+    startBtn.onclick = () => {
 
         tourStarted = true;
         gpsActive = true;
@@ -1726,8 +1726,6 @@ if (startBtn) {
         try {
             compassActive = true;
 
-            const isVK = typeof vkBridge !== "undefined" && vkBridge.isWebView();
-
             const isIOS =
                 typeof DeviceOrientationEvent !== "undefined" &&
                 typeof DeviceOrientationEvent.requestPermission === "function";
@@ -1735,56 +1733,7 @@ if (startBtn) {
             const ua = navigator.userAgent.toLowerCase();
             const isAndroid = ua.includes("android");
 
-            if (isVK) {
-                tgLog("INFO", "Compass: VK Bridge mode");
-                try {
-                    // Используем DeviceMotion через VK Bridge
-                    await vkBridge.send("VKWebAppDeviceMotionStart", { refresh_rate: 50 });
-                    vkBridge.subscribe(e => {
-                        if (!compassActive) return;
-                        if (e.detail.type !== "VKWebAppDeviceMotionChanged") return;
-                        const d = e.detail.data;
-                        // alpha — азимут (0-360, север=0)
-                        if (d.alpha == null) return;
-                        const raw = normalizeAngle(d.alpha);
-                        smoothAngle = normalizeAngle(0.85 * smoothAngle + 0.15 * raw);
-                        compassUpdates++;
-                        lastMapBearing = (typeof map.getBearing === "function") ? map.getBearing() : 0;
-                        lastCorrectedAngle = normalizeAngle(smoothAngle - lastMapBearing);
-                        applyArrowTransform(lastCorrectedAngle);
-                        if (followMode && lastCoords) {
-                            map.easeTo({
-                                center: [lastCoords[1], lastCoords[0]],
-                                bearing: smoothAngle,
-                                duration: 300
-                            });
-                        }
-                        debugUpdate("vk-motion", lastCorrectedAngle);
-                    });
-                } catch(vkErr) {
-                    tgLog("WARN", `VK Gyro failed: ${vkErr.message}`);
-                    // Фолбэк на обычный deviceorientation
-                    window.addEventListener("deviceorientation", e => {
-                        if (!compassActive) return;
-                        if (e.alpha == null) return;
-                        const raw = normalizeAngle(e.alpha);
-                        smoothAngle = normalizeAngle(0.85 * smoothAngle + 0.15 * raw);
-                        compassUpdates++;
-                        lastMapBearing = (typeof map.getBearing === "function") ? map.getBearing() : 0;
-                        lastCorrectedAngle = normalizeAngle(smoothAngle - lastMapBearing);
-                        applyArrowTransform(lastCorrectedAngle);
-                        if (followMode && lastCoords) {
-                            map.easeTo({
-                                center: [lastCoords[1], lastCoords[0]],
-                                bearing: smoothAngle,
-                                duration: 300
-                            });
-                        }
-                        debugUpdate("vk-fallback", lastCorrectedAngle);
-                    });
-                }
-
-            } else if (isIOS) {
+            if (isIOS) {
                 DeviceOrientationEvent.requestPermission()
                     .then(state => {
                         if (state === "granted") {
@@ -1805,6 +1754,8 @@ if (startBtn) {
                         return;
                     }
 
+                    // Вычисляем истинный азимут через матрицу поворота
+                    // Корректно работает при любом наклоне телефона (вертикально, в держателе и т.д.)
                     const toRad = Math.PI / 180;
                     const alpha = e.alpha * toRad;
                     const beta  = e.beta  * toRad;
@@ -1814,6 +1765,7 @@ if (startBtn) {
                     const sb = Math.sin(beta),  cb = Math.cos(beta);
                     const sg = Math.sin(gamma), cg = Math.cos(gamma);
 
+                    // Проекция вектора "вперёд" устройства на горизонтальную плоскость
                     const Vx = sa * sg - ca * sb * cg;
                     const Vy = ca * sg + sa * sb * cg;
 
@@ -1839,7 +1791,6 @@ if (startBtn) {
         } catch (err) {
             console.warn("Compass error:", err);
         }
-                   
 
         unlockAudioIOS();
         unlockVideoIOS();

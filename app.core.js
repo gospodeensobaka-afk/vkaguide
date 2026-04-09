@@ -1705,7 +1705,7 @@ document.addEventListener("kzn:startTour", () => {
 });
 
 if (startBtn) {
-    startBtn.onclick = () => {
+    startBtn.onclick = async () => {
 
         tourStarted = true;
         gpsActive = true;

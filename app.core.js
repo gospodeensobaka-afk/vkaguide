@@ -1736,16 +1736,17 @@ if (startBtn) {
             const isAndroid = ua.includes("android");
 
             if (isVK) {
-                // ВК WebView — используем VK Bridge гироскоп
                 tgLog("INFO", "Compass: VK Bridge mode");
                 try {
-                    await vkBridge.send("VKWebAppGyroscopeStart", { refresh_rate: 50 });
+                    // Используем DeviceMotion через VK Bridge
+                    await vkBridge.send("VKWebAppDeviceMotionStart", { refresh_rate: 50 });
                     vkBridge.subscribe(e => {
                         if (!compassActive) return;
-                        if (e.detail.type !== "VKWebAppGyroscopeChanged") return;
-                        const { x, y, z } = e.detail.data;
-                        const heading = Math.atan2(y, x) * (180 / Math.PI);
-                        const raw = normalizeAngle(heading);
+                        if (e.detail.type !== "VKWebAppDeviceMotionChanged") return;
+                        const d = e.detail.data;
+                        // alpha — азимут (0-360, север=0)
+                        if (d.alpha == null) return;
+                        const raw = normalizeAngle(d.alpha);
                         smoothAngle = normalizeAngle(0.85 * smoothAngle + 0.15 * raw);
                         compassUpdates++;
                         lastMapBearing = (typeof map.getBearing === "function") ? map.getBearing() : 0;
@@ -1758,7 +1759,7 @@ if (startBtn) {
                                 duration: 300
                             });
                         }
-                        debugUpdate("vk-gyro", lastCorrectedAngle);
+                        debugUpdate("vk-motion", lastCorrectedAngle);
                     });
                 } catch(vkErr) {
                     tgLog("WARN", `VK Gyro failed: ${vkErr.message}`);

@@ -1,63 +1,102 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Mini Audio Guide</title>
-
-    <!-- VK Bridge — первым, до всего остального -->
-    <script src="vk-bridge.min.js"></script>
-    <script>
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', function() {
-                vkBridge.send('VKWebAppInit');
-            });
-        } else {
-            vkBridge.send('VKWebAppInit');
-        }
-    </script>
-
-    <link rel="stylesheet" href="styles.css">
-    <link href="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.css" rel="stylesheet" />
-    <script src="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.js"></script>
-    <script src="onboarding.js?v=13" defer></script>
-    <script src="app.core.js?v=13" defer></script>
-    <script src="app.media.js?v=13" defer></script>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Тест статуса группы</title>
+<style>
+  :root { --bg:#14161a; --card:#1e2127; --line:#343942; --text:#eceef2; --muted:#9097a3; --accent:#6fb1ff; --ok:#5dd28a; --bad:#ff7a70; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:20px 16px 40px; background:var(--bg); color:var(--text); font:16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  p.sub { margin:0 0 20px; color:var(--muted); font-size:14px; }
+  label { display:block; font-size:13px; color:var(--muted); margin:14px 0 6px; }
+  input { width:100%; padding:12px; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--text); font-size:16px; }
+  button { width:100%; margin-top:10px; padding:14px; border:0; border-radius:10px; background:var(--accent); color:#0b1320; font-size:16px; font-weight:600; }
+  button.ghost { background:var(--card); color:var(--text); border:1px solid var(--line); }
+  button:active { opacity:.8; }
+  .step { margin-top:22px; font-size:13px; color:var(--muted); }
+  #log { margin-top:22px; padding:12px; border-radius:10px; background:var(--card); border:1px solid var(--line); font:13px/1.5 ui-monospace, Menlo, monospace; white-space:pre-wrap; word-break:break-word; min-height:90px; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); }
+</style>
 </head>
 <body>
-    <!-- AUDIO WRAPPER -->
-    <div id="audioWrapper">
-        <audio id="globalAudio" controls preload="auto"></audio>
-    </div>
-    <!-- START TOUR BUTTON -->
-    <button id="startTourBtn"
-        style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); z-index:999999;">
-        Начать экскурсию
-    </button>
-    <!-- NOT READY BUTTON -->
-    <button id="notReadyBtn">
-        Не успеваю
-    </button>
-    <!-- PROGRESS BAR -->
-    <div id="tourProgress">
-        Пройдено: 0 из 0
-    </div>
+  <h1>Тест статуса группы</h1>
+  <p class="sub">Проверяем, можем ли мы писать и читать статус группы ВК из миниаппа.</p>
 
-    <!-- MAP -->
-    <div id="map"></div>
-    <!-- PHOTO OVERLAY -->
-    <div id="photoOverlay" class="photo-overlay hidden">
-        <div class="photo-inner">
-            <img id="photoImage" src="">
-            <button id="closePhotoBtn" class="close-photo-btn">✕</button>
-        </div>
-    </div>
-    <!-- GALLERY OVERLAY -->
-    <div id="galleryOverlay" class="hidden"></div>
-    <script>
-        if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('sw.js');
-        }
-    </script>
+  <label for="gid">Номер группы (только цифры, без минуса)</label>
+  <input id="gid" inputmode="numeric" placeholder="например 123456789" />
+
+  <div class="step">Шаг 1</div>
+  <button id="btnAuth">Разрешить доступ</button>
+
+  <div class="step">Шаг 2</div>
+  <label for="val">Что записать в статус</label>
+  <input id="val" inputmode="numeric" value="1" />
+  <button id="btnSet">Записать в статус</button>
+
+  <div class="step">Шаг 3</div>
+  <button id="btnGet" class="ghost">Прочитать статус</button>
+
+  <div id="log">Здесь появится результат.</div>
+
+<script src="vk-bridge.min.js"></script>
+<script>
+  var API_V = "5.199";
+  var token = null;
+  var params = new URLSearchParams(location.search);
+  var APP_ID = Number(params.get("vk_app_id")) || 0;
+
+  var logEl = document.getElementById("log");
+  function log(text, cls) {
+    var line = document.createElement("div");
+    if (cls) line.className = cls;
+    line.textContent = text;
+    logEl.appendChild(line);
+  }
+  function clearLog() { logEl.textContent = ""; }
+  function describe(e) {
+    try { return JSON.stringify(e && e.error_data ? e.error_data : e); } catch (x) { return String(e); }
+  }
+  function groupId() {
+    var g = document.getElementById("gid").value.replace(/\D/g, "");
+    if (!g) { clearLog(); log("Впиши номер группы.", "bad"); return null; }
+    return g;
+  }
+
+  vkBridge.send("VKWebAppInit").catch(function () {});
+
+  document.getElementById("btnAuth").onclick = function () {
+    clearLog();
+    if (!APP_ID) { log("Не вижу номер приложения. Открой страницу из ВК, а не по прямой ссылке.", "bad"); return; }
+    vkBridge.send("VKWebAppGetAuthToken", { app_id: APP_ID, scope: "status" })
+      .then(function (r) { token = r.access_token; log("Доступ получен.", "ok"); })
+      .catch(function (e) { log("Доступ не получен: " + describe(e), "bad"); });
+  };
+
+  function call(method, extra) {
+    if (!token) { clearLog(); log("Сначала нажми «Разрешить доступ».", "bad"); return Promise.reject(); }
+    var p = { v: API_V, access_token: token };
+    for (var k in extra) p[k] = extra[k];
+    return vkBridge.send("VKWebAppCallAPIMethod", { method: method, params: p });
+  }
+
+  document.getElementById("btnSet").onclick = function () {
+    var g = groupId(); if (!g) return;
+    var v = document.getElementById("val").value.trim();
+    clearLog();
+    call("status.set", { group_id: g, text: v })
+      .then(function (r) { log("Записано «" + v + "». Ответ ВК: " + JSON.stringify(r.response), "ok"); })
+      .catch(function (e) { if (e) log("Не записалось: " + describe(e), "bad"); });
+  };
+
+  document.getElementById("btnGet").onclick = function () {
+    var g = groupId(); if (!g) return;
+    clearLog();
+    call("status.get", { group_id: g })
+      .then(function (r) { log("Сейчас в статусе: «" + (r.response.text || "") + "»", "ok"); })
+      .catch(function (e) { if (e) log("Не прочиталось: " + describe(e), "bad"); });
+  };
+</script>
 </body>
 </html>

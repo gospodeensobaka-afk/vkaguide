@@ -38,6 +38,9 @@
   <div class="step">Шаг 3</div>
   <button id="btnGet" class="ghost">Прочитать статус</button>
 
+  <div class="step">Шаг 4 (новый)</div>
+  <button id="btnWall" class="ghost">Прочитать первый пост со стены</button>
+
   <div id="log">Здесь появится результат.</div>
 
 <script src="vk-bridge.min.js"></script>
@@ -88,6 +91,20 @@
     call("status.set", { group_id: g, text: v })
       .then(function (r) { log("Записано «" + v + "». Ответ ВК: " + JSON.stringify(r.response), "ok"); })
       .catch(function (e) { if (e) log("Не записалось: " + describe(e), "bad"); });
+  };
+
+  document.getElementById("btnWall").onclick = function () {
+    var g = groupId(); if (!g) return;
+    clearLog();
+    call("wall.get", { owner_id: "-" + g, count: 3 })
+      .then(function (r) {
+        var items = r.response.items || [];
+        if (!items.length) { log("На стене нет постов.", "bad"); return; }
+        items.forEach(function (it, i) {
+          log("Пост " + (i + 1) + (it.is_pinned ? " (закреплён)" : "") + ": «" + (it.text || "") + "»", "ok");
+        });
+      })
+      .catch(function (e) { if (e) log("Не прочиталось: " + describe(e), "bad"); });
   };
 
   document.getElementById("btnGet").onclick = function () {

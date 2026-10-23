@@ -72,10 +72,9 @@ button{border:0;border-radius:10px;padding:12px 16px;background:#3478f6;color:wh
   guideInput.addEventListener("change", refreshSelection);
 
   async function getUserToken() {
-    if (!window.vkBridge || !vkBridge.isWebView()) throw new Error("Откройте страницу внутри VK Mini App, а не обычной вкладкой браузера.");
+    if (!window.vkBridge) throw new Error("Не загрузился VK Bridge (vk-bridge.min.js). Обновите страницу и попробуйте ещё раз.");
     await vkBridge.send("VKWebAppInit");
-    const appId = Number(new URLSearchParams(location.search).get("vk_app_id"));
-    if (!appId) throw new Error("В адресе страницы не найден vk_app_id. Откройте её по кнопке из мини-приложения.");
+    const appId = Number(new URLSearchParams(location.search).get("vk_app_id")) || 54500370;
     const auth = await vkBridge.send("VKWebAppGetAuthToken", { app_id: appId, scope: "photos" });
     if (!auth || !auth.access_token) throw new Error("VK не выдал пользовательский токен с доступом photos.");
     return auth.access_token;

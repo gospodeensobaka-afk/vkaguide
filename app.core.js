@@ -200,7 +200,7 @@ function preloadSingle(src) {
 
         if (src.match(/\.(jpg|jpeg|png)$/i)) {
             const img = new Image();
-            img.src = src;
+            img.src = window.vkMediaUrl("vkaguide", src);
             img.onload = resolve;
             img.onerror = resolve;
             return;
@@ -1520,7 +1520,7 @@ function openMediaMenu(p) {
                 box.onmouseout = () => box.style.transform = "scale(1)";
 
                 const img = document.createElement("img");
-                img.src = src;
+                img.src = window.vkMediaUrl("vkaguide", src);
                 img.style.width = "100%";
                 img.style.height = "100%";
                 img.style.objectFit = "cover";

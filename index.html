@@ -25,7 +25,7 @@
 </head>
 <body>
   <h1>Пульт квеста</h1>
-  <a class="media-upload-link" href="media-upload.html" onclick="this.href='media-upload.html'+location.search">Загрузить фото в VK →</a>
+  <a class="media-upload-link" href="media-upload-v2.html" onclick="const u=new URL(this.href);new URLSearchParams(location.search).forEach((v,k)=>u.searchParams.set(k,v));this.href=u.href">Загрузить фото в VK →</a>
   <div id="now">Сейчас у туристов: <b>—</b></div>
 
   <button class="pause" data-n="0">0 · Пауза (экран ожидания)</button>

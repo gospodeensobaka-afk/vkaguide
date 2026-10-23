@@ -65,6 +65,7 @@ function setupPhotoTimingsForAudio(audio, zoneId) {
    ======================================================== */
 
 function showFullscreenMedia(src, type, duration = null) {
+    if (type === "photo") src = window.vkMediaUrl("vkaguide", src);
     let overlay = document.getElementById("fsMediaOverlay");
     let media = document.getElementById("fsMediaElement");
     let closeBtn = document.getElementById("fsMediaClose");

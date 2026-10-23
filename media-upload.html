@@ -25,6 +25,7 @@ button{border:0;border-radius:10px;padding:12px 16px;background:#3478f6;color:wh
 </section>
 <section class="card">
   <p class="small">Для загрузки VK запросит доступ к фотографиям вашего аккаунта. Ссылки будут привязаны к вашему профилю VK; никаких публикаций на стене загрузчик не делает.</p>
+  <button id="uploadGithub" class="secondary">Загрузить картинки из GitHub (для телефона)</button>
   <button id="upload">Подключить VK и загрузить выбранные фото</button>
   <button id="download" class="secondary" disabled>Скачать vk-media.js</button>
 </section>
@@ -39,8 +40,18 @@ button{border:0;border-radius:10px;padding:12px 16px;background:#3478f6;color:wh
   const statusEl = document.getElementById("status");
   const selectionEl = document.getElementById("selection");
   const uploadBtn = document.getElementById("upload");
+  const uploadGithubBtn = document.getElementById("uploadGithub");
   const downloadBtn = document.getElementById("download");
   let uploaded = {};
+  const GITHUB_IMAGES = [
+    ...Array.from({ length: 14 }, (_, i) => ({ repo: "dynamic-guide", path: `images/deshi/${i + 1}.jpeg` })),
+    ...["atbash","brail","caesar","engalph","klavanouta","klavatelef","kvadratpolibiya","morze","pigpen","polybiy","rot13","rusalph","ruspolibiy","tablmend"]
+      .map(name => ({ repo: "dynamic-guide", path: `images/shifrs/${name}.jpeg` })),
+    ...["maptiles/bg_0_0.jpg","maptiles/dt_0_0.jpg","maptiles/dt_0_1.jpg"]
+      .map(path => ({ repo: "dynamic-guide", path })),
+    ...["president.jpeg","bulak shas.jpeg","bulakdo1957.jpeg","parad.jpeg"]
+      .map(path => ({ repo: "vkaguide", path: `images/${path}` }))
+  ];
 
   function status(message, type) { statusEl.textContent = message; statusEl.className = type || ""; }
   function filesFor(input, repo) {
@@ -93,6 +104,12 @@ button{border:0;border-radius:10px;padding:12px 16px;background:#3478f6;color:wh
     });
   }
   async function uploadOne(item, token) {
+    if (!item.file && item.sourceUrl) {
+      const sourceResponse = await fetch(item.sourceUrl, { mode: "cors", cache: "no-store" });
+      if (!sourceResponse.ok) throw new Error("Не удалось скачать исходник " + item.key + " (HTTP " + sourceResponse.status + ")");
+      const blob = await sourceResponse.blob();
+      item.file = new File([blob], item.key.split("/").pop(), { type: blob.type || "image/jpeg" });
+    }
     const server = await callApi("photos.getWallUploadServer", {}, token);
     if (!server || !server.upload_url) throw new Error("VK не вернул адрес загрузки");
     const form = new FormData();
@@ -129,17 +146,17 @@ button{border:0;border-radius:10px;padding:12px 16px;background:#3478f6;color:wh
     link.click();
     setTimeout(() => URL.revokeObjectURL(link.href), 1000);
   };
-  uploadBtn.onclick = async () => {
-    const files = selectedFiles();
-    if (!files.length) { status("Сначала выберите одну или обе папки проекта.", "bad"); return; }
+  async function runUpload(files) {
+    if (!files.length) { status("Нет изображений для загрузки.", "bad"); return; }
     uploadBtn.disabled = true;
+    uploadGithubBtn.disabled = true;
     try {
       status("Запрашиваю у VK разрешение на фотографии…");
       const token = await getUserToken();
       status("Подготавливаю личное хранилище фотографий VK…");
       let corsFailed = 0;
       for (let i = 0; i < files.length; i++) {
-        status(`Загружаю ${i + 1}/${files.length}: ${files[i].key}`);
+        status(`${files[i].sourceUrl ? "Скачиваю и загружаю" : "Загружаю"} ${i + 1}/${files.length}: ${files[i].key}`);
         const result = await uploadOne(files[i], token);
         if (!result.cors.ok) corsFailed++;
       }
@@ -147,7 +164,18 @@ button{border:0;border-radius:10px;padding:12px 16px;background:#3478f6;color:wh
       status(`Готово. Загружено в VK под вашим аккаунтом: ${urls}. Посты на стене не создавались.\nCORS проверка VK CDN: ${urls - corsFailed}/${urls} успешно.\nСкачайте vk-media.js и замените им файл в корне ОБОИХ репозиториев.\n` + (corsFailed ? `Внимание: ${corsFailed} URL не прошли CORS-проверку. Для MapLibre эти ссылки могут не сработать; проверьте строки с maptiles в журнале/повторите проверку в самом приложении.` : "Все URL открылись с CORS для браузерного чтения; это необходимое условие для карты MapLibre."), corsFailed ? "bad" : "ok");
     } catch (error) {
       status("Ошибка: " + (error && error.message || String(error)), "bad");
-    } finally { uploadBtn.disabled = false; }
+    } finally { uploadBtn.disabled = false; uploadGithubBtn.disabled = false; }
+  }
+  uploadBtn.onclick = () => runUpload(selectedFiles());
+  uploadGithubBtn.onclick = () => {
+    const files = GITHUB_IMAGES.map(({ repo, path }) => {
+      const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+      return {
+        key: repo + "/" + path,
+        sourceUrl: `https://raw.githubusercontent.com/gospodeensobaka-afk/${repo}/main/${encodedPath}`
+      };
+    });
+    runUpload(files);
   };
 })();
 </script>

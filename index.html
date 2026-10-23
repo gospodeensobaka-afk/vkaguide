@@ -19,11 +19,13 @@
   .q:active, .pause:active { transform:scale(.97); }
   button[disabled] { opacity:.5; }
   #log { margin-top:18px; padding:12px; border-radius:10px; background:var(--card); border:1px solid var(--line); font:13px/1.5 ui-monospace,Menlo,monospace; white-space:pre-wrap; word-break:break-word; min-height:60px; color:var(--muted); }
+  .media-upload-link { display:inline-block; margin:0 0 14px; color:var(--gold); font-size:14px; }
   .ok { color:var(--ok); } .bad { color:var(--bad); }
 </style>
 </head>
 <body>
   <h1>Пульт квеста</h1>
+  <a class="media-upload-link" href="media-upload.html" onclick="this.href='media-upload.html'+location.search">Загрузить фото в VK →</a>
   <div id="now">Сейчас у туристов: <b>—</b></div>
 
   <button class="pause" data-n="0">0 · Пауза (экран ожидания)</button>
@@ -32,6 +34,7 @@
   <div id="log">Подключаюсь…</div>
 
 <script src="vk-bridge.min.js"></script>
+<script src="vk-media.js?v=1"></script>
 <script>
   var GROUP = "236911218";
   var V = "5.199";

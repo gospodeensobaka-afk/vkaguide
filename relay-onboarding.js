@@ -27,7 +27,7 @@
   const page=R.shell('relayGuide','<div class="relay-card"><button class="relay-back">← Выбор режима</button><h1>Ретранслятор фото</h1><p id="relayNow">Сейчас у туристов: —</p><div class="relay-status" role="status" aria-live="polite"></div><button class="relay-pause" id="relayPause">Убрать фото / пауза</button><button id="relayRefresh">Обновить состояние</button> <button id="relayPrepare">Подготовить фото ВК</button><div class="relay-grid"></div></div>');
   const back=document.createElement('button');back.className='relay-quest-back';back.textContent='← Режимы';back.hidden=true;document.body.append(back);
   const status=page.querySelector('.relay-status'), now=page.querySelector('#relayNow'), grid=page.querySelector('.relay-grid');
-  let ordered=[...R.photos].sort((a,b)=>Number(b.id)-Number(a.id));
+  let ordered=[...R.photos].sort((a,b)=>Number(a.id)-Number(b.id));
   const ORDER_KEY='relay-guide-photo-order-v1';
   try {
     const ids=JSON.parse(localStorage.getItem(ORDER_KEY)||'[]');
@@ -38,9 +38,15 @@
       ordered=[...saved,...byId.values()];
     }
   } catch(_) {}
-  let editing=false, drag=null;
+  let sessionId='', editing=false, drag=null;
+  const newSession=()=>Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
   const edit=document.createElement('button');edit.id='relayEditOrder';edit.textContent='Изменить порядок';
   grid.before(edit);
+  const reverse=document.createElement('button');reverse.textContent='Обратить порядок фото';grid.before(reverse);
+  reverse.onclick=()=>{if(operation||drag)return;ordered.reverse();persistOrder();draw();};
+  const closeSession=document.createElement('button');closeSession.textContent='Закрыть сессию';grid.before(closeSession);
+  closeSession.onclick=()=>{if(operation||editing)return;if(confirm('Закрыть экскурсию и очистить галереи туристов?'))write('close-session');};
+
   const hint=document.createElement('p');hint.hidden=true;
   hint.textContent='Тяни фото за ручку ↕. У края экрана список прокручивается. Можно также выбрать ручку и нажимать стрелки на клавиатуре. Порядок сохраняется на этом устройстве.';
   grid.before(hint);
@@ -111,11 +117,11 @@
       }
       grid.append(button);
     });
-    grid.classList.toggle('editing-order',editing);edit.disabled=operation;
+    grid.classList.toggle('editing-order',editing);edit.disabled=operation;reverse.disabled=operation;closeSession.disabled=operation||editing;
     page.querySelector('#relayPause').disabled=editing || operation || !connected;
   }
   function state(text){
-    const s=R.parse(text);selected=s.type==='photo'?s.id:'';
+    const s=R.parse(text);sessionId=s.session||'';selected=s.type==='photo'?s.id:'';
     now.textContent='Сейчас у туристов: '+(s.type==='photo'?(R.byId.get(s.id)?.title || 'Фото '+s.id):s.type==='quest'?'квест, '+(s.id===0?'пауза':'загадка '+s.id):s.type==='pause'?'пауза':'неизвестная команда');draw();
   }
   async function refreshRelay(){
@@ -127,7 +133,11 @@
   async function write(description){
     if(editing || operation || !connected)return;operation=true;draw();status.textContent='Отправляю…';
     try{
-      await getToken();const result=await R.api('groups.edit',{group_id:R.GROUP,description},ctoken);
+      // Read authoritative session before each write (also works after restarting the guide).
+      await getToken();const live=R.parse(await R.read(ctoken));
+      sessionId=live.session||sessionId||newSession();
+      description=description==='close-session'?'r'+newSession()+':closed':'r'+sessionId+':'+(description||'pause');
+      const result=await R.api('groups.edit',{group_id:R.GROUP,description},ctoken);
       if(result!==1 && result!==true)throw new Error('Unexpected edit result');
       const text=await R.read(ctoken);state(text);
       status.textContent=text===description?'Готово. Туристы получат изменение при следующем опросе.':'ВК показывает другую команду. Проверьте состояние.';

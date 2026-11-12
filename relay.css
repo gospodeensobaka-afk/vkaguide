@@ -29,3 +29,11 @@ body { font-family:system-ui,-apple-system,"Segoe UI",sans-serif; }
 .relay-quest-back { position:fixed; top:88px; right:12px; z-index:9999; padding:8px 12px; background:#101622; color:#e8c97a; border:1px solid #e8c97a; border-radius:10px; font:13px system-ui,sans-serif; }
 .relay-quest-back[hidden] { display:none; }
 .relay-shell textarea { width:100%; min-height:150px; background:#111827; color:#fff; }
+
+/* Drag handles allow the rest of the screen to scroll normally on phones. */
+.relay-tile img { -webkit-user-drag:none; user-select:none; }
+.relay-tile .relay-drag-handle { top:0; bottom:auto; left:auto; right:0; width:48px; height:48px; display:grid; place-items:center; font-size:28px; background:#080b11e8; color:#e8c97a; touch-action:none; user-select:none; cursor:grab; z-index:2; }
+.relay-tile .relay-drag-handle:focus-visible { outline:3px solid #fff; outline-offset:-3px; }
+.relay-grid .relay-tile.dragging { opacity:.55; }
+.relay-grid .relay-tile.drop-target { border-color:#fff; box-shadow:0 0 0 3px #e8c97a; }
+#relayEditOrder { margin-top:12px; }

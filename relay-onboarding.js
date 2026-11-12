@@ -26,6 +26,7 @@
   const menu=R.shell('modeChoice','<div class="relay-card"><h1>Пульт гида</h1><p>Выберите режим экскурсии</p><button class="relay-choice" data-mode="quest"><strong>Пульт квеста</strong>Загадки 0–14</button><button class="relay-choice" data-mode="relay"><strong>Пульт ретранслятора</strong>Фотографии для туристов</button></div>');
   const page=R.shell('relayGuide','<div class="relay-card"><button class="relay-back">← Выбор режима</button><h1>Ретранслятор фото</h1><p id="relayNow">Сейчас у туристов: —</p><div class="relay-status" role="status" aria-live="polite"></div><button class="relay-pause" id="relayPause">Убрать фото / пауза</button><button id="relayRefresh">Обновить состояние</button> <button id="relayPrepare">Подготовить фото ВК</button><div class="relay-grid"></div></div>');
   const back=document.createElement('button');back.className='relay-quest-back';back.textContent='← Режимы';back.hidden=true;document.body.append(back);
+  const build=document.createElement('small');build.textContent='Версия 13.11 · 04';page.querySelector('h1').after(build);
   const status=page.querySelector('.relay-status'), now=page.querySelector('#relayNow'), grid=page.querySelector('.relay-grid');
   let ordered=[...R.photos].sort((a,b)=>Number(a.id)-Number(b.id));
   const ORDER_KEY='relay-guide-photo-order-v1';
@@ -44,7 +45,16 @@
   const reverse=document.createElement('button');reverse.textContent='Обратить порядок фото';grid.before(reverse);
   reverse.onclick=()=>{if(operation||drag)return;ordered.reverse();persistOrder();draw();};
   const closeSession=document.createElement('button');closeSession.textContent='Очистить галерею у всех';grid.before(closeSession);
-  closeSession.onclick=()=>{if(operation||editing)return;if(confirm('Убрать фото и очистить галереи у подключённых туристов?'))write('');};
+  const resetPanel=document.createElement('div');resetPanel.hidden=true;
+  resetPanel.innerHTML='<p>Убрать фото и очистить галереи у подключённых туристов?</p><button type="button" data-reset="yes">Да, очистить</button> <button type="button" data-reset="no">Отмена</button>';
+  closeSession.after(resetPanel);
+  closeSession.onclick=()=>{
+    if(operation||drag||!connected)return;
+    editing=false;hint.hidden=true;edit.textContent='Изменить порядок';resetPanel.hidden=false;draw();
+  };
+  resetPanel.querySelector('[data-reset="no"]').onclick=()=>{resetPanel.hidden=true;};
+  resetPanel.querySelector('[data-reset="yes"]').onclick=()=>{resetPanel.hidden=true;write('');};
+
 
   const hint=document.createElement('p');hint.hidden=true;
   hint.textContent='Тяни фото за ручку ↕. У края экрана список прокручивается. Можно также выбрать ручку и нажимать стрелки на клавиатуре. Порядок сохраняется на этом устройстве.';
@@ -116,7 +126,7 @@
       }
       grid.append(button);
     });
-    grid.classList.toggle('editing-order',editing);edit.disabled=operation;reverse.disabled=operation;closeSession.disabled=operation||editing;
+    grid.classList.toggle('editing-order',editing);edit.disabled=operation;reverse.disabled=operation;closeSession.disabled=operation||!!drag||!connected;
     page.querySelector('#relayPause').disabled=editing || operation || !connected;
   }
   function state(text){

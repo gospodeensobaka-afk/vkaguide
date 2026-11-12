@@ -13,8 +13,6 @@
   function parse(value) {
     const text=String(value || '').trim();
     if (!text) return {type:'pause'};
-    const session=text.match(/^r([a-zA-Z0-9-]+):(p\d+|pause|closed)$/);
-    if(session)return {type:session[2].startsWith('p')?'photo':session[2]==='closed'?'closed':'pause',id:session[2].startsWith('p')?session[2].slice(1):undefined,session:session[1]};
     if (/^\d+$/.test(text)) return {type:'quest',id:Number(text)};
     if (/^p\d+$/.test(text)) return {type:'photo',id:text.slice(1)};
     return {type:'ignore'};

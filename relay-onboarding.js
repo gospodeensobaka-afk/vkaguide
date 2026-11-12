@@ -38,14 +38,13 @@
       ordered=[...saved,...byId.values()];
     }
   } catch(_) {}
-  let sessionId='', editing=false, drag=null;
-  const newSession=()=>Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
+  let editing=false, drag=null;
   const edit=document.createElement('button');edit.id='relayEditOrder';edit.textContent='Изменить порядок';
   grid.before(edit);
   const reverse=document.createElement('button');reverse.textContent='Обратить порядок фото';grid.before(reverse);
   reverse.onclick=()=>{if(operation||drag)return;ordered.reverse();persistOrder();draw();};
-  const closeSession=document.createElement('button');closeSession.textContent='Закрыть сессию';grid.before(closeSession);
-  closeSession.onclick=()=>{if(operation||editing)return;if(confirm('Закрыть экскурсию и очистить галереи туристов?'))write('close-session');};
+  const closeSession=document.createElement('button');closeSession.textContent='Очистить галерею у всех';grid.before(closeSession);
+  closeSession.onclick=()=>{if(operation||editing)return;if(confirm('Убрать фото и очистить галереи у подключённых туристов?'))write('');};
 
   const hint=document.createElement('p');hint.hidden=true;
   hint.textContent='Тяни фото за ручку ↕. У края экрана список прокручивается. Можно также выбрать ручку и нажимать стрелки на клавиатуре. Порядок сохраняется на этом устройстве.';
@@ -121,7 +120,7 @@
     page.querySelector('#relayPause').disabled=editing || operation || !connected;
   }
   function state(text){
-    const s=R.parse(text);sessionId=s.session||'';selected=s.type==='photo'?s.id:'';
+    const s=R.parse(text);selected=s.type==='photo'?s.id:'';
     now.textContent='Сейчас у туристов: '+(s.type==='photo'?(R.byId.get(s.id)?.title || 'Фото '+s.id):s.type==='quest'?'квест, '+(s.id===0?'пауза':'загадка '+s.id):s.type==='pause'?'пауза':'неизвестная команда');draw();
   }
   async function refreshRelay(){
@@ -133,10 +132,7 @@
   async function write(description){
     if(editing || operation || !connected)return;operation=true;draw();status.textContent='Отправляю…';
     try{
-      // Read authoritative session before each write (also works after restarting the guide).
-      await getToken();const live=R.parse(await R.read(ctoken));
-      sessionId=live.session||sessionId||newSession();
-      description=description==='close-session'?'r'+newSession()+':closed':'r'+sessionId+':'+(description||'pause');
+      await getToken();
       const result=await R.api('groups.edit',{group_id:R.GROUP,description},ctoken);
       if(result!==1 && result!==true)throw new Error('Unexpected edit result');
       const text=await R.read(ctoken);state(text);

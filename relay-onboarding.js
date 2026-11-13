@@ -23,10 +23,9 @@
     })().catch(e=>{tokenDenied=true;throw e;}).finally(()=>{tokenRequest=null;});
     return tokenRequest;
   };
-  const menu=R.shell('modeChoice','<div class="relay-card"><h1>Пульт гида</h1><p>Выберите режим экскурсии</p><button class="relay-choice" data-mode="quest"><strong>Пульт квеста</strong>Загадки 0–14</button><button class="relay-choice" data-mode="relay"><strong>Пульт ретранслятора</strong>Фотографии для туристов</button></div>');
+  const menu=R.shell('modeChoice','<div class="relay-card relay-welcome"><div class="relay-compass" aria-hidden="true"><svg width="48" height="48" viewBox="0 0 48 48" fill="none"> <circle cx="24" cy="24" r="23" stroke="#E8C97A" stroke-width="1.2" stroke-dasharray="6 3"/> <path d="M24 8 L26 18 L24 16 L22 18 Z" fill="#E8C97A"/> <path d="M24 40 L26 30 L24 32 L22 30 Z" fill="#E8C97A"/> <path d="M8 24 L18 22 L16 24 L18 26 Z" fill="#E8C97A"/> <path d="M40 24 L30 22 L32 24 L30 26 Z" fill="#E8C97A"/> <circle cx="24" cy="24" r="6" stroke="#E8C97A" stroke-width="1"/> <circle cx="24" cy="24" r="2" fill="#E8C97A"/> </svg></div><h1>Пульт гида</h1><p>Выберите режим экскурсии</p><button class="relay-choice" data-mode="quest"><strong>Пульт квеста</strong>Загадки 0–14</button><button class="relay-choice" data-mode="relay"><strong>Пульт ретранслятора</strong>Фотографии для туристов</button></div>');
   const page=R.shell('relayGuide','<div class="relay-card"><button class="relay-back">← Выбор режима</button><h1>Ретранслятор фото</h1><p id="relayNow">Сейчас у туристов: —</p><div class="relay-status" role="status" aria-live="polite"></div><button class="relay-pause" id="relayPause">Убрать фото / пауза</button><button id="relayRefresh">Обновить состояние</button> <button id="relayPrepare">Подготовить фото ВК</button><div class="relay-grid"></div></div>');
   const back=document.createElement('button');back.className='relay-quest-back';back.textContent='← Режимы';back.hidden=true;document.body.append(back);
-  const build=document.createElement('small');build.textContent='Версия 13.11 · 04';page.querySelector('h1').after(build);
   const status=page.querySelector('.relay-status'), now=page.querySelector('#relayNow'), grid=page.querySelector('.relay-grid');
   let ordered=[...R.photos].sort((a,b)=>Number(a.id)-Number(b.id));
   const ORDER_KEY='relay-guide-photo-order-v1';

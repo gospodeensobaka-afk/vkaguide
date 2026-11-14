@@ -92,3 +92,14 @@ body { font-family:system-ui,-apple-system,"Segoe UI",sans-serif; }
 /* Keep both navigation actions accessible on the quest map. */
 body:has(#mapScreen.active) .relay-quest-back { top:calc(var(--relay-top) + 56px); }
 #relayGuide .relay-card > button:not(.relay-back) { margin-bottom:8px; }
+
+/* Soft press feedback for touch, mouse and keyboard, with reduced-motion support. */
+.relay-shell button,.relay-quest-back,#questControls button { transition:transform 160ms ease-out,filter 160ms ease-out,box-shadow 160ms ease-out; transform-origin:center; }
+.relay-shell button:not(:disabled):active,.relay-quest-back:active,#questControls button:not(:disabled):active { transform:scale(.96); filter:brightness(1.12); }
+.relay-grid.editing-order .relay-tile:active { transform:none; filter:none; }
+@media (prefers-reduced-motion:reduce) {
+  .relay-shell button,.relay-quest-back,#questControls button { transition:none; }
+  .relay-shell button:not(:disabled):active,.relay-quest-back:active,#questControls button:not(:disabled):active { transform:none; }
+}
+
+#relayGuide .relay-grid { grid-template-columns:repeat(4,minmax(0,1fr)); }

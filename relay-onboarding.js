@@ -98,7 +98,7 @@
     handle.onlostpointercapture=e=>end(e,false);
     handle.onclick=e=>{e.preventDefault();e.stopPropagation();};
     handle.onkeydown=e=>{
-      const delta={ArrowLeft:-1,ArrowRight:1,ArrowUp:-3,ArrowDown:3}[e.key];
+      const delta={ArrowLeft:-1,ArrowRight:1,ArrowUp:-4,ArrowDown:4}[e.key];
       if(delta===undefined)return;e.preventDefault();e.stopPropagation();
       const i=ordered.indexOf(p),next=ordered[Math.max(0,Math.min(ordered.length-1,i+delta))];
       movePhoto(p.id,next.id);draw();
@@ -117,7 +117,6 @@
       button.setAttribute('aria-label',p.title);button.classList.toggle('selected',p.id===selected);button.setAttribute('aria-pressed',String(p.id===selected));
       const ready=R.allowedURL(p.url);
       if(ready){const img=document.createElement('img');img.src=R.allowedURL(p.thumb)?p.thumb:p.url;img.alt='';img.loading='lazy';button.append(img);img.onerror=()=>{button.title=p.title+' — изображение не загрузилось';};}
-      const label=document.createElement('span');label.textContent=p.title+(ready?'':' · не готово');button.append(label);
       button.disabled=!editing&&(!ready || operation || !connected);
       button.onclick=()=>{if(!editing)write('p'+p.id);};
       if(editing){
